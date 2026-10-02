@@ -66,6 +66,20 @@ class VentaService
                 throw ValidationException::withMessages(['cliente_id' => 'Para vender al crédito identifica al cliente (no "Clientes varios").']);
             }
 
+            // ===== NUEVO: reglas del módulo de clientes =====
+            if (! $cliente->activo) {
+                throw ValidationException::withMessages(['cliente_id' => 'Ese cliente está desactivado. Actívalo en Clientes si corresponde.']);
+            }
+            // No se factura a un RUC dado de baja o no habido (según la última verificación con SUNAT)
+            if ($esFactura && ($problema = $cliente->problemaSunat())) {
+                throw ValidationException::withMessages(['cliente_id' => "No se puede emitir factura: {$problema}"]);
+            }
+            if ($esCredito && $cliente->tieneDeudaVencida()) {
+                throw ValidationException::withMessages([
+                    'forma_pago' => 'El cliente tiene cuotas vencidas sin pagar. Cobra lo vencido (menú Cobranzas) o véndele al contado.',
+                ]);
+            }
+
             // El dinero de las ventas al contado entra a la caja de quien cobra
             $caja = $esCredito ? null : $this->cajas->requerirAbierta($usuario, 'pagos');
 
@@ -112,6 +126,17 @@ class VentaService
             }
             if ((float) $comprobante->total <= 0) {
                 throw ValidationException::withMessages(['items' => 'El comprobante no puede tener total cero.']);
+            }
+
+            // ===== NUEVO: límite de crédito del cliente (0 = sin tope) =====
+            if ($esCredito && (float) $cliente->limite_credito > 0) {
+                $deudaTotal = $cliente->deuda() + (float) $comprobante->total; // esta venta aún tiene saldo 0
+                if ($deudaTotal > (float) $cliente->limite_credito + 0.009) {
+                    throw ValidationException::withMessages([
+                        'forma_pago' => 'Con esta venta el cliente debería S/ '.number_format($deudaTotal, 2)
+                            .' y su límite de crédito es S/ '.number_format((float) $cliente->limite_credito, 2).'.',
+                    ]);
+                }
             }
 
             if ($comprobante->esCredito()) {

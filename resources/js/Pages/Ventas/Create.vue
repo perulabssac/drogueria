@@ -61,9 +61,17 @@ const form = useForm({
 // ================= CLIENTE =================
 const cliente = ref(null);
 const sugerenciasCliente = ref([]);
+const textoCliente = ref(''); // lo que se escribió en el buscador
+const errorBusquedaCliente = ref('');
 const buscarClientes = async (e) => {
-    sugerenciasCliente.value = await obtenerJson('/api/clientes/buscar', { q: e.query, ...(esFactura.value ? { tipo: '6' } : {}) });
+    textoCliente.value = e.query.trim();
+    errorBusquedaCliente.value = '';
+    sugerenciasCliente.value = await obtenerJson('/api/clientes/buscar', { q: textoCliente.value, ...(esFactura.value ? { tipo: '6' } : {}) });
 };
+// Si no está registrado y es un DNI/RUC válido, se ofrece buscarlo en SUNAT/RENIEC
+const numeroConsultable = computed(() =>
+    esFactura.value ? /^(10|15|17|20)\d{9}$/.test(textoCliente.value) : /^(\d{8}|(10|15|17|20)\d{9})$/.test(textoCliente.value),
+);
 
 // Al cambiar el tipo: serie, cliente y forma de pago por defecto
 watch(tipo, (t) => {
@@ -76,10 +84,20 @@ watch(tipo, (t) => {
     }
 }, { immediate: true });
 
+// Aviso si el RUC elegido figura en SUNAT como BAJA o NO HABIDO
+const avisoCliente = computed(() => {
+    const c = cliente.value;
+    if (!c || typeof c !== 'object' || c.tipo_documento !== '6') return null;
+    if (c.estado_sunat && c.estado_sunat !== 'ACTIVO') return `El RUC figura en SUNAT como ${c.estado_sunat}.`;
+    if (c.condicion_sunat && c.condicion_sunat !== 'HABIDO') return `El RUC figura en SUNAT como ${c.condicion_sunat}.`;
+    return null;
+});
+
 // Registro rápido de cliente sin salir de la venta
 const nuevoCliente = ref(null);
 const erroresCliente = ref({});
 const guardandoCliente = ref(false);
+const consultandoCliente = ref(false);
 const abrirNuevoCliente = () => {
     erroresCliente.value = {};
     nuevoCliente.value = { tipo_documento: esFactura.value ? '6' : '1', numero_documento: '', razon_social: '', direccion: '' };
@@ -94,6 +112,35 @@ const guardarCliente = async () => {
     } finally {
         guardandoCliente.value = false;
     }
+};
+// Buscar en SUNAT/RENIEC: si ya está registrado no gasta consulta; si no, lo trae y lo guarda
+const clienteConsultable = computed(() => ['1', '6'].includes(nuevoCliente.value?.tipo_documento));
+const traerCliente = async (numero) => {
+    consultandoCliente.value = true;
+    try {
+        const r = await enviarJson('/api/clientes/consultar', { numero });
+        if (esFactura.value && r.cliente.tipo_documento !== '6') {
+            return 'Para factura se necesita un RUC (11 dígitos).';
+        }
+        cliente.value = r.cliente;
+        return null;
+    } catch (e) {
+        return e.errores?.numero?.[0] ?? Object.values(e.errores ?? {})[0]?.[0] ?? e.message;
+    } finally {
+        consultandoCliente.value = false;
+    }
+};
+// Desde el buscador principal (cliente no registrado)
+const consultarDesdeBuscador = async () => {
+    errorBusquedaCliente.value = (await traerCliente(textoCliente.value)) ?? '';
+};
+// Desde el panel "Nuevo cliente"
+const consultarCliente = async () => {
+    if (!clienteConsultable.value || !nuevoCliente.value.numero_documento.trim()) return;
+    erroresCliente.value = {};
+    const fallo = await traerCliente(nuevoCliente.value.numero_documento.trim());
+    if (fallo) erroresCliente.value = { numero_documento: [fallo] };
+    else nuevoCliente.value = null;
 };
 const opcionesDocCliente = computed(() =>
     esFactura.value
@@ -229,7 +276,8 @@ const puedeEmitir = computed(
         (form.forma_pago === 'contado'
             ? props.cajaAbierta && pagosCuadran.value && !efectivoInsuficiente.value
             : cuotasCuadran.value && !creditoSinCliente.value) &&
-        !boletaSinIdentificar.value,
+        !boletaSinIdentificar.value &&
+        !(esFactura.value && avisoCliente.value),
 );
 
 const error = (i, campo) => form.errors[`items.${i}.${campo}`];
@@ -426,8 +474,9 @@ const emitir = () => {
                             :delay="250"
                             forceSelection
                             fluid
-                            :invalid="!!form.errors.cliente_id"
+                            :invalid="!!form.errors.cliente_id || !!errorBusquedaCliente"
                             @complete="buscarClientes"
+                            @keydown.enter="numeroConsultable && !sugerenciasCliente.length && consultarDesdeBuscador()"
                         >
                             <template #option="{ option }">
                                 <div>
@@ -435,11 +484,31 @@ const emitir = () => {
                                     <p class="text-xs text-slate-500">{{ option.tipo_documento === '6' ? 'RUC' : 'DOC' }} {{ option.numero_documento }}</p>
                                 </div>
                             </template>
+                            <template #empty>
+                                <div class="p-2">
+                                    <Button
+                                        v-if="numeroConsultable"
+                                        :label="`Buscar ${textoCliente} en ${textoCliente.length === 11 ? 'SUNAT' : 'RENIEC'}`"
+                                        icon="pi pi-search"
+                                        severity="help"
+                                        size="small"
+                                        :loading="consultandoCliente"
+                                        @click="consultarDesdeBuscador"
+                                    />
+                                    <span v-else class="text-sm text-slate-500">
+                                        No está registrado. Escribe el {{ esFactura ? 'RUC' : 'DNI o RUC' }} completo para buscarlo, o usa "Nuevo cliente".
+                                    </span>
+                                </div>
+                            </template>
                         </AutoComplete>
+                        <small v-if="errorBusquedaCliente" class="text-red-600">{{ errorBusquedaCliente }}</small>
                         <small v-if="cliente" class="text-slate-500">
                             {{ cliente.tipo_documento === '6' ? 'RUC' : 'Doc.' }} {{ cliente.numero_documento }}
                             <span v-if="cliente.direccion"> · {{ cliente.direccion }}</span>
                         </small>
+                        <Message v-if="avisoCliente" :severity="esFactura ? 'error' : 'warn'" size="small">
+                            {{ avisoCliente }} <span v-if="esFactura">No se le puede emitir factura.</span>
+                        </Message>
                         <small class="text-red-600">{{ form.errors.cliente_id }}</small>
                     </div>
 
@@ -448,16 +517,32 @@ const emitir = () => {
                         <p class="text-sm font-medium">Nuevo cliente</p>
                         <div class="grid grid-cols-3 gap-2">
                             <Select v-model="nuevoCliente.tipo_documento" :options="opcionesDocCliente" optionLabel="label" optionValue="value" fluid />
-                            <div class="col-span-2">
-                                <InputText v-model="nuevoCliente.numero_documento" placeholder="Número" fluid :invalid="!!erroresCliente.numero_documento" />
+                            <div class="col-span-2 flex gap-2">
+                                <InputText
+                                    v-model="nuevoCliente.numero_documento"
+                                    placeholder="Número"
+                                    fluid
+                                    :invalid="!!erroresCliente.numero_documento"
+                                    @keydown.enter.prevent="consultarCliente"
+                                />
+                                <Button
+                                    v-if="clienteConsultable"
+                                    icon="pi pi-search"
+                                    severity="help"
+                                    :loading="consultandoCliente"
+                                    :disabled="!nuevoCliente.numero_documento"
+                                    v-tooltip.top="nuevoCliente.tipo_documento === '6' ? 'Buscar en SUNAT' : 'Buscar en RENIEC'"
+                                    @click="consultarCliente"
+                                />
                             </div>
                         </div>
                         <small v-if="erroresCliente.numero_documento" class="text-red-600 block">{{ erroresCliente.numero_documento[0] }}</small>
+                        <small v-if="clienteConsultable" class="text-slate-500 block">Escribe el número y pulsa 🔍 (o Enter): los datos se llenan solos.</small>
                         <InputText v-model="nuevoCliente.razon_social" placeholder="Razón social o nombre completo" fluid :invalid="!!erroresCliente.razon_social" />
                         <InputText v-model="nuevoCliente.direccion" placeholder="Dirección (opcional)" fluid />
                         <div class="flex justify-end gap-2">
                             <Button label="Cancelar" text severity="secondary" size="small" @click="nuevoCliente = null" />
-                            <Button label="Guardar cliente" icon="pi pi-check" size="small" :loading="guardandoCliente" @click="guardarCliente" />
+                            <Button label="Guardar a mano" icon="pi pi-check" size="small" :loading="guardandoCliente" @click="guardarCliente" />
                         </div>
                     </div>
 
@@ -475,12 +560,13 @@ const emitir = () => {
                     </div>
                     <small v-if="esBoleta" class="text-slate-500 block">Las boletas son solo al contado. Para crédito usa factura o nota de venta.</small>
                     <Message v-if="creditoSinCliente" severity="warn" size="small">Para vender al crédito elige un cliente identificado (no "Clientes varios").</Message>
+                    <Message v-if="form.errors.forma_pago" severity="error" size="small">{{ form.errors.forma_pago }}</Message>
 
-                                        <!-- Sin caja abierta no se puede cobrar al contado -->
+                    <!-- Sin caja abierta no se puede cobrar al contado -->
                     <Message v-if="form.forma_pago === 'contado' && !cajaAbierta" severity="warn" size="small">
                         No tienes tu caja abierta. <Link href="/caja" class="font-semibold underline">Abre tu caja</Link> para cobrar al contado.
                     </Message>
-                    
+
                     <!-- Contado: con qué se pagó (uno o varios medios) -->
                     <template v-if="form.forma_pago === 'contado'">
                         <div v-for="(p, i) in form.pagos" :key="i" class="rounded-lg border border-slate-200 p-3 space-y-2">
@@ -537,7 +623,7 @@ const emitir = () => {
                 <section class="bg-white rounded-xl border border-slate-200 p-5 space-y-3">
                     <h2 class="font-semibold">Datos adicionales</h2>
                     <div class="grid grid-cols-2 gap-3">
-                                                <div class="flex flex-col gap-1">
+                        <div class="flex flex-col gap-1">
                             <InputText v-model="form.guia_remision" placeholder="Guía (ej. T001-123)" :invalid="!!form.errors.guia_remision" @blur="form.guia_remision = form.guia_remision.toUpperCase().trim()" />
                             <small v-if="form.errors.guia_remision" class="text-red-600">{{ form.errors.guia_remision }}</small>
                         </div>
