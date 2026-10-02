@@ -1,5 +1,6 @@
 <?php
 
+use App\Http\Controllers\AjusteController;
 use App\Http\Controllers\AuthController;
 use App\Http\Controllers\CajaController;
 use App\Http\Controllers\ClienteController;
@@ -14,6 +15,7 @@ use App\Http\Controllers\PerfilController;
 use App\Http\Controllers\ProductoController;
 use App\Http\Controllers\ProveedorController;
 use App\Http\Controllers\ReporteContableController;
+use App\Http\Controllers\StockController;
 use App\Http\Controllers\UsuarioController;
 use App\Http\Controllers\VentaController;
 use Illuminate\Support\Facades\Route;
@@ -90,6 +92,11 @@ Route::middleware('auth')->group(function () {
         Route::get('/compras/nueva', [CompraController::class, 'create'])->name('compras.create');
         Route::post('/compras', [CompraController::class, 'store'])->name('compras.store');
         Route::post('/compras/{compra}/anular', [CompraController::class, 'anular'])->name('compras.anular');
+
+        // Registrar ajustes de inventario (el contador solo los ve)
+        Route::get('/ajustes/nuevo', [AjusteController::class, 'create'])->name('ajustes.create');
+        Route::post('/ajustes', [AjusteController::class, 'store'])->name('ajustes.store');
+        Route::get('/api/ajustes/lotes', [AjusteController::class, 'lotes']);
     });
 
     // Consulta de comprobantes (solo lectura): vendedores y contador
@@ -107,9 +114,13 @@ Route::middleware('auth')->group(function () {
         Route::get('/compras', [CompraController::class, 'index'])->name('compras.index');
         Route::get('/compras/{compra}', [CompraController::class, 'show'])->name('compras.show');
 
-        // Kárdex (almacén, contador y admin)
+        // Inventario: stock, kárdex y ajustes (almacén, contador y admin)
+        Route::get('/inventario', [StockController::class, 'index'])->name('inventario.stock');
+        Route::get('/inventario/excel', [StockController::class, 'excel'])->name('inventario.excel');
         Route::get('/kardex', [KardexController::class, 'index'])->name('kardex.index');
         Route::get('/kardex/{producto}/excel', [KardexController::class, 'excel'])->name('kardex.excel');
+        Route::get('/ajustes', [AjusteController::class, 'index'])->name('ajustes.index');
+        Route::get('/ajustes/{ajuste}', [AjusteController::class, 'show'])->name('ajustes.show');
     });
 
     // Reportes contables: contador y administrador

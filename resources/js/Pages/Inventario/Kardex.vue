@@ -24,7 +24,7 @@ const puedeVerComprobantes = ['admin', 'vendedor', 'contador'].includes(rol);
 const puedeVerCompras = ['admin', 'almacen', 'contador'].includes(rol);
 const enlace = (url) => {
     if (!url) return null;
-    if (url.startsWith('/compras')) return puedeVerCompras ? url : null;
+    if (url.startsWith('/compras') || url.startsWith('/ajustes')) return puedeVerCompras ? url : null;
     return puedeVerComprobantes ? url : null;
 };
 

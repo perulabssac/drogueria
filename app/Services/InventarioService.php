@@ -179,6 +179,24 @@ class InventarioService
         return $asignacion;
     }
 
+    public function descontarDeLote(int $loteId, float $cantidad, ?int $userId, string $motivo, ?Model $referencia = null): Lote
+    {
+        $lote = Lote::query()->lockForUpdate()->findOrFail($loteId);
+
+        if ((float) $lote->cantidad + 0.0001 < $cantidad) {
+            throw ValidationException::withMessages([
+                'items' => "El lote {$lote->numero_lote} solo tiene {$lote->cantidad} unidades y quieres sacar {$cantidad}.",
+            ]);
+        }
+
+        $lote->cantidad = round((float) $lote->cantidad - $cantidad, 2);
+        $lote->save();
+
+        $this->registrarMovimiento($lote, 'salida', $motivo, $cantidad, $userId, $referencia);
+
+        return $lote;
+    }
+
     private function registrarMovimiento(Lote $lote, string $tipo, string $motivo, float $cantidad, ?int $userId, ?Model $referencia): void
     {
         MovimientoInventario::create([

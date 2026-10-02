@@ -6,6 +6,7 @@ use App\Models\Compra;
 use App\Models\Comprobante;
 use App\Models\MovimientoInventario;
 use App\Models\Producto;
+use App\Models\Ajuste;
 use Carbon\CarbonImmutable;
 use Illuminate\Database\Eloquent\Builder;
 use Illuminate\Database\Eloquent\Relations\MorphTo;
@@ -97,7 +98,6 @@ class KardexService
         ];
     }
 
-    /** Documento que originó el movimiento (venta, compra, nota de crédito...) y su cliente o proveedor. */
     private function documento(MovimientoInventario $m): array
     {
         $ref = $m->referencia;
@@ -112,6 +112,11 @@ class KardexService
                 'documento' => $ref->tipo_nombre.' '.$ref->numero,
                 'tercero' => $ref->cliente?->razon_social,
                 'url' => "/comprobantes/{$ref->id}",
+            ],
+            $ref instanceof Ajuste => [
+                'documento' => 'Ajuste '.$ref->numero,
+                'tercero' => $ref->motivo_nombre,
+                'url' => "/ajustes/{$ref->id}",
             ],
             default => ['documento' => null, 'tercero' => null, 'url' => null],
         };
