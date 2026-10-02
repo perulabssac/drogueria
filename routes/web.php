@@ -8,6 +8,7 @@ use App\Http\Controllers\ComprobanteController;
 use App\Http\Controllers\CompraController;
 use App\Http\Controllers\ConfiguracionController;
 use App\Http\Controllers\DashboardController;
+use App\Http\Controllers\KardexController;
 use App\Http\Controllers\NotaCreditoController;
 use App\Http\Controllers\PerfilController;
 use App\Http\Controllers\ProductoController;
@@ -105,6 +106,10 @@ Route::middleware('auth')->group(function () {
     Route::middleware('rol:almacen,contador')->group(function () {
         Route::get('/compras', [CompraController::class, 'index'])->name('compras.index');
         Route::get('/compras/{compra}', [CompraController::class, 'show'])->name('compras.show');
+
+        // Kárdex (almacén, contador y admin)
+        Route::get('/kardex', [KardexController::class, 'index'])->name('kardex.index');
+        Route::get('/kardex/{producto}/excel', [KardexController::class, 'excel'])->name('kardex.excel');
     });
 
     // Reportes contables: contador y administrador

@@ -26,6 +26,7 @@ const opciones = [
     { texto: 'Cobranzas', icono: 'pi pi-money-bill', url: '/cobranzas', roles: ['vendedor'] },
     { texto: 'Clientes', icono: 'pi pi-id-card', url: '/clientes', roles: ['vendedor'] },
     { texto: 'Productos', icono: 'pi pi-box', url: '/productos', roles: ['almacen'] },
+    { texto: 'Kárdex', icono: 'pi pi-list', url: '/kardex', roles: ['almacen', 'contador'] },
     { texto: 'Compras', icono: 'pi pi-truck', url: '/compras', roles: ['almacen', 'contador'] },
     { texto: 'Proveedores', icono: 'pi pi-building', url: '/proveedores', roles: ['almacen'] },
     { texto: 'Reportes contables', icono: 'pi pi-chart-bar', url: '/reportes', roles: ['contador'] },

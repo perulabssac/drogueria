@@ -10,6 +10,18 @@ class MovimientoInventario extends Model
 {
     protected $table = 'movimientos_inventario';
 
+    /** Nombre de cada motivo para mostrarlo en el kárdex. */
+    public const MOTIVOS = [
+        'inventario_inicial' => 'Inventario inicial',
+        'compra' => 'Compra',
+        'bonificacion' => 'Bonificación',
+        'venta' => 'Venta',
+        'devolucion_venta' => 'Devolución de cliente (nota de crédito)',
+        'rechazo_sunat' => 'Reversión (comprobante rechazado por SUNAT)',
+        'anulacion_compra' => 'Anulación de compra',
+        'ajuste' => 'Ajuste de inventario',
+    ];
+
     protected $fillable = [
         'producto_id', 'lote_id', 'sucursal_id', 'user_id', 'tipo', 'motivo', 'cantidad',
         'saldo_lote', 'costo_unitario', 'referencia_type', 'referencia_id', 'observacion',
@@ -35,7 +47,6 @@ class MovimientoInventario extends Model
         return $this->belongsTo(User::class, 'user_id');
     }
 
-    /** Documento que originó el movimiento (por ahora, un comprobante). */
     public function referencia(): MorphTo
     {
         return $this->morphTo();
