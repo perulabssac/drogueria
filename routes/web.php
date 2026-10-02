@@ -17,6 +17,7 @@ use App\Http\Controllers\ProveedorController;
 use App\Http\Controllers\ReporteContableController;
 use App\Http\Controllers\StockController;
 use App\Http\Controllers\UsuarioController;
+use App\Http\Controllers\VencimientoController;
 use App\Http\Controllers\VentaController;
 use Illuminate\Support\Facades\Route;
 
@@ -97,6 +98,9 @@ Route::middleware('auth')->group(function () {
         Route::get('/ajustes/nuevo', [AjusteController::class, 'create'])->name('ajustes.create');
         Route::post('/ajustes', [AjusteController::class, 'store'])->name('ajustes.store');
         Route::get('/api/ajustes/lotes', [AjusteController::class, 'lotes']);
+
+        // Dar de baja lotes vencidos (genera un ajuste con su acta)
+        Route::post('/vencimientos/baja', [VencimientoController::class, 'baja'])->name('vencimientos.baja');
     });
 
     // Consulta de comprobantes (solo lectura): vendedores y contador
@@ -114,13 +118,14 @@ Route::middleware('auth')->group(function () {
         Route::get('/compras', [CompraController::class, 'index'])->name('compras.index');
         Route::get('/compras/{compra}', [CompraController::class, 'show'])->name('compras.show');
 
-        // Inventario: stock, kárdex y ajustes (almacén, contador y admin)
+        // Inventario: stock, kárdex, ajustes y vencimientos (almacén, contador y admin)
         Route::get('/inventario', [StockController::class, 'index'])->name('inventario.stock');
         Route::get('/inventario/excel', [StockController::class, 'excel'])->name('inventario.excel');
         Route::get('/kardex', [KardexController::class, 'index'])->name('kardex.index');
         Route::get('/kardex/{producto}/excel', [KardexController::class, 'excel'])->name('kardex.excel');
         Route::get('/ajustes', [AjusteController::class, 'index'])->name('ajustes.index');
         Route::get('/ajustes/{ajuste}', [AjusteController::class, 'show'])->name('ajustes.show');
+        Route::get('/vencimientos', [VencimientoController::class, 'index'])->name('vencimientos.index');
     });
 
     // Reportes contables: contador y administrador
