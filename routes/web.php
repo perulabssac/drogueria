@@ -16,6 +16,7 @@ use App\Http\Controllers\ProductoController;
 use App\Http\Controllers\ProveedorController;
 use App\Http\Controllers\ReporteContableController;
 use App\Http\Controllers\StockController;
+use App\Http\Controllers\TomaInventarioController;
 use App\Http\Controllers\UsuarioController;
 use App\Http\Controllers\VencimientoController;
 use App\Http\Controllers\VentaController;
@@ -101,6 +102,12 @@ Route::middleware('auth')->group(function () {
 
         // Dar de baja lotes vencidos (genera un ajuste con su acta)
         Route::post('/vencimientos/baja', [VencimientoController::class, 'baja'])->name('vencimientos.baja');
+
+        // Toma de inventario: abrir, contar y anular (aprobar es solo del administrador)
+        Route::post('/tomas', [TomaInventarioController::class, 'store'])->name('tomas.store');
+        Route::put('/tomas/{toma}/conteo', [TomaInventarioController::class, 'conteo'])->name('tomas.conteo');
+        Route::post('/tomas/{toma}/lotes', [TomaInventarioController::class, 'agregarLote'])->name('tomas.lotes');
+        Route::post('/tomas/{toma}/anular', [TomaInventarioController::class, 'anular'])->name('tomas.anular');
     });
 
     // Consulta de comprobantes (solo lectura): vendedores y contador
@@ -118,7 +125,7 @@ Route::middleware('auth')->group(function () {
         Route::get('/compras', [CompraController::class, 'index'])->name('compras.index');
         Route::get('/compras/{compra}', [CompraController::class, 'show'])->name('compras.show');
 
-        // Inventario: stock, kárdex, ajustes y vencimientos (almacén, contador y admin)
+        // Inventario: stock, kárdex, ajustes, vencimientos y tomas (almacén, contador y admin)
         Route::get('/inventario', [StockController::class, 'index'])->name('inventario.stock');
         Route::get('/inventario/excel', [StockController::class, 'excel'])->name('inventario.excel');
         Route::get('/kardex', [KardexController::class, 'index'])->name('kardex.index');
@@ -126,6 +133,9 @@ Route::middleware('auth')->group(function () {
         Route::get('/ajustes', [AjusteController::class, 'index'])->name('ajustes.index');
         Route::get('/ajustes/{ajuste}', [AjusteController::class, 'show'])->name('ajustes.show');
         Route::get('/vencimientos', [VencimientoController::class, 'index'])->name('vencimientos.index');
+        Route::get('/tomas', [TomaInventarioController::class, 'index'])->name('tomas.index');
+        Route::get('/tomas/{toma}', [TomaInventarioController::class, 'show'])->name('tomas.show');
+        Route::get('/tomas/{toma}/hoja', [TomaInventarioController::class, 'hoja'])->name('tomas.hoja');
     });
 
     // Reportes contables: contador y administrador
@@ -151,6 +161,9 @@ Route::middleware('auth')->group(function () {
         // Notas de crédito (anulan o devuelven ventas)
         Route::get('/comprobantes/{comprobante}/nota-credito', [NotaCreditoController::class, 'create'])->name('notas-credito.create');
         Route::post('/comprobantes/{comprobante}/nota-credito', [NotaCreditoController::class, 'store'])->name('notas-credito.store');
+
+        // Aprobar la toma de inventario (ajusta el stock según el conteo)
+        Route::post('/tomas/{toma}/aprobar', [TomaInventarioController::class, 'aprobar'])->name('tomas.aprobar');
     });
 
     // Solo administrador

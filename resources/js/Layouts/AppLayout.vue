@@ -34,6 +34,7 @@ const opciones = [
             { texto: 'Kárdex', icono: 'pi pi-list', url: '/kardex', roles: ['almacen', 'contador'] },
             { texto: 'Vencimientos', icono: 'pi pi-calendar-times', url: '/vencimientos', roles: ['almacen', 'contador'] },
             { texto: 'Ajustes', icono: 'pi pi-sliders-h', url: '/ajustes', roles: ['almacen', 'contador'] },
+            { texto: 'Toma de inventario', icono: 'pi pi-check-square', url: '/tomas', roles: ['almacen', 'contador'] },
         ],
     },
     { texto: 'Compras', icono: 'pi pi-truck', url: '/compras', roles: ['almacen', 'contador'] },
