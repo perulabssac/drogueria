@@ -40,7 +40,15 @@ Route::middleware('auth')->group(function () {
         Route::get('/ventas/nueva', [VentaController::class, 'create'])->name('ventas.create');
         Route::post('/ventas', [VentaController::class, 'store'])->name('ventas.store');
 
+        // Clientes (consulta a SUNAT/RENIEC con Decolecta)
+        Route::get('/clientes', [ClienteController::class, 'index'])->name('clientes.index');
+        Route::get('/clientes/nuevo', [ClienteController::class, 'create'])->name('clientes.create');
+        Route::post('/clientes', [ClienteController::class, 'store'])->name('clientes.store');
+        Route::get('/clientes/{cliente}/editar', [ClienteController::class, 'edit'])->name('clientes.edit');
+        Route::put('/clientes/{cliente}', [ClienteController::class, 'update'])->name('clientes.update');
+        Route::post('/clientes/{cliente}/verificar', [ClienteController::class, 'verificar'])->middleware('throttle:10,1');
         Route::get('/api/clientes/buscar', [ClienteController::class, 'buscar']);
+        Route::post('/api/clientes/consultar', [ClienteController::class, 'consultar'])->middleware('throttle:20,1');
         Route::post('/api/clientes', [ClienteController::class, 'guardarRapido']);
 
         // Acciones con SUNAT (el contador no las tiene)

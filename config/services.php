@@ -28,6 +28,12 @@ return [
         'region' => env('AWS_DEFAULT_REGION', 'us-east-1'),
     ],
 
+    // Consulta de RUC (SUNAT) y DNI (RENIEC). Plan gratuito: 100 consultas al mes.
+    'decolecta' => [
+        'key' => env('DECOLECTA_API_KEY'),
+        'url' => env('DECOLECTA_API_URL', 'https://api.decolecta.com'),
+    ],
+
     'slack' => [
         'notifications' => [
             'bot_user_oauth_token' => env('SLACK_BOT_USER_OAUTH_TOKEN'),
