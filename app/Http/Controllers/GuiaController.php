@@ -31,6 +31,8 @@ class GuiaController extends Controller
     public function index(Request $request): Response
     {
         $buscar = trim($request->string('buscar')->toString());
+        // "T001-25", "t001 25" o "25" → correlativo 25
+        $numero = preg_match('/^(?:[A-Z]\d{3}\s*-?\s*)?0*(\d{1,8})$/i', $buscar, $m) ? (int) $m[1] : null;
 
         $guias = Guia::query()
             ->with('comprobante:id,tipo_comprobante,serie,correlativo')
@@ -40,7 +42,7 @@ class GuiaController extends Controller
             ->when($buscar, fn ($q) => $q->where(fn ($w) => $w
                 ->where('destinatario_nombre', 'like', "%{$buscar}%")
                 ->orWhere('destinatario_num_doc', 'like', "{$buscar}%")
-                ->orWhere('correlativo', (int) preg_replace('/\D/', '', $buscar) ?: 0)))
+                ->when($numero, fn ($o) => $o->orWhere('correlativo', $numero))))
             ->latest('id')
             ->paginate(20)
             ->withQueryString();
