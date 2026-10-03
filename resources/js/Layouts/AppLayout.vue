@@ -19,7 +19,7 @@ const empresa = computed(() => page.props.empresa);
 // Opciones del menú. "roles" indica quién puede verlas (el admin ve todo).
 // Un grupo (con "hijos") se muestra si el usuario puede ver al menos una de sus opciones.
 const opciones = [
-    { texto: 'Inicio', icono: 'pi pi-home', url: '/', roles: ['vendedor', 'almacen'] },
+    { texto: 'Inicio', icono: 'pi pi-home', url: '/', roles: ['vendedor', 'almacen', 'contador'] },
     { texto: 'Nueva venta', icono: 'pi pi-shopping-cart', url: '/ventas/nueva', roles: ['vendedor'] },
     { texto: 'Cotizaciones', icono: 'pi pi-file-edit', url: '/cotizaciones', roles: ['vendedor', 'contador'] },
     { texto: 'Comprobantes', icono: 'pi pi-file', url: '/comprobantes', roles: ['vendedor', 'contador'] },

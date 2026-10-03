@@ -2,66 +2,51 @@
 
 namespace App\Http\Controllers;
 
-use App\Models\Lote;
-use App\Models\Producto;
-use Illuminate\Http\RedirectResponse;
+use App\Services\DashboardService;
 use Illuminate\Http\Request;
-use Illuminate\Support\Facades\DB;
 use Inertia\Inertia;
 use Inertia\Response;
 
+/**
+ * Tablero de Inicio: cada rol ve los indicadores que le sirven.
+ * - Vendedor: ventas, cotizaciones, por cobrar y SUNAT.
+ * - Almacén: inventario (stock bajo, vencimientos) y por pagar.
+ * - Contador: ventas, utilidad, por cobrar, por pagar y SUNAT.
+ * - Administrador: todo.
+ */
 class DashboardController extends Controller
 {
-    public function __invoke(Request $request): Response|RedirectResponse
+    public function __invoke(Request $request): Response
     {
-        // El contador no ve stock ni ventas del día: entra directo a sus reportes
-        if ($request->user()->rol === 'contador') {
-            return redirect('/reportes');
-        }
-        $sucursalId = $request->user()->sucursal_id;
-        $hoy = now()->toDateString();
+        $usuario = $request->user();
+        $d = new DashboardService($usuario->sucursal_id);
 
-        // Stock vigente (no vencido) sumado por producto
-        $stockPorProducto = Lote::query()
-            ->select('producto_id', DB::raw('SUM(cantidad) as stock'))
-            ->where('sucursal_id', $sucursalId)
-            ->whereDate('fecha_vencimiento', '>=', $hoy)
-            ->groupBy('producto_id');
-
-        // stock_minimo está en presentaciones; el stock en unidades mínimas
-        $stockBajo = Producto::query()
-            ->where('activo', true)
-            ->where('stock_minimo', '>', 0)
-            ->leftJoinSub($stockPorProducto, 's', 's.producto_id', '=', 'productos.id')
-            ->whereRaw('COALESCE(s.stock, 0) <= productos.stock_minimo * productos.unidades_por_presentacion')
-            ->orderBy('nombre')
-            ->limit(10)
-            ->get([
-                'productos.id', 'productos.nombre', 'productos.concentracion', 'productos.stock_minimo',
-                'productos.unidad_venta', 'productos.fraccionable', 'productos.unidades_por_presentacion', 'productos.unidad_fraccion',
-                DB::raw('COALESCE(s.stock, 0) as stock'),
-            ]);
-
-        $porVencer = Lote::query()
-            ->with('producto:id,nombre,concentracion,unidad_venta,fraccionable,unidades_por_presentacion,unidad_fraccion')
-            ->where('sucursal_id', $sucursalId)
-            ->where('cantidad', '>', 0)
-            ->whereDate('fecha_vencimiento', '<=', now()->addDays(90)->toDateString())
-            ->orderBy('fecha_vencimiento')
-            ->limit(10)
-            ->get();
+        $ve = fn (string ...$roles) => $usuario->tieneRol(...$roles);
 
         return Inertia::render('Dashboard', [
-            'kpis' => [
-                'productos' => Producto::where('activo', true)->count(),
-                'lotes_por_vencer' => Lote::where('sucursal_id', $sucursalId)->where('cantidad', '>', 0)
-                    ->whereBetween('fecha_vencimiento', [$hoy, now()->addDays(90)->toDateString()])->count(),
-                'lotes_vencidos' => Lote::where('sucursal_id', $sucursalId)->where('cantidad', '>', 0)
-                    ->whereDate('fecha_vencimiento', '<', $hoy)->count(),
-                'stock_bajo' => $stockBajo->count(),
+            'secciones' => [
+                'ventas' => $ve('vendedor', 'contador'),
+                'utilidad' => $ve('contador'),
+                'inventario' => $ve('almacen'),
+                'cobrar' => $ve('vendedor', 'contador'),
+                'pagar' => $ve('almacen', 'contador'),
+                'sunat' => $ve('vendedor', 'contador'),
+                'cotizaciones' => $ve('vendedor'),
             ],
-            'stockBajo' => $stockBajo,
-            'porVencer' => $porVencer,
+            // Lo que el rol no ve no se calcula (llega como null)
+            'ventas' => $ve('vendedor', 'contador') ? $d->resumenVentas() : null,
+            'ventasPorDia' => $ve('vendedor', 'contador') ? $d->ventasPorDia(30) : null,
+            'ingresosPorMedio' => $ve('vendedor', 'contador') ? $d->ingresosPorMedio() : null,
+            'topProductos' => $ve('vendedor', 'contador', 'almacen') ? $d->topProductos(10) : null,
+            'topClientes' => $ve('vendedor', 'contador') ? $d->topClientes(5) : null,
+            'utilidad' => $ve('contador') ? $d->utilidadMes() : null,
+            'porCobrar' => $ve('vendedor', 'contador') ? $d->porCobrar() : null,
+            'porPagar' => $ve('almacen', 'contador') ? $d->porPagar() : null,
+            'sunat' => $ve('vendedor', 'contador') ? $d->alertasSunat() : null,
+            'cotizaciones' => $ve('vendedor') ? $d->cotizaciones() : null,
+            'inventario' => $ve('almacen') ? $d->inventario() : null,
+            'stockBajo' => $ve('almacen') ? $d->stockBajo(8) : null,
+            'porVencer' => $ve('almacen') ? $d->porVencer(8) : null,
         ]);
     }
 }

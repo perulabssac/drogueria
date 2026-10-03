@@ -19,6 +19,13 @@ const page = usePage();
 const anulada = computed(() => props.compra.estado === 'anulada');
 const soloLectura = page.props.auth.user.rol === 'contador';
 
+// Pago al proveedor (solo compras al crédito)
+const ESTADO_PAGO = { pendiente: ['Por pagar', 'info'], vencida: ['Vencida', 'danger'], pagada: ['Pagada', 'success'] };
+const conDeuda = computed(() => props.compra.forma_pago === 'credito' && !anulada.value);
+const pagosActivos = computed(() => (props.compra.pagos ?? []).filter((p) => p.estado === 'activo'));
+const pagado = computed(() => pagosActivos.value.reduce((t, p) => t + Number(p.monto), 0));
+const puedePagar = ['admin', 'contador'].includes(page.props.auth.user.rol);
+
 const anular = () => {
     confirm.require({
         header: 'Anular compra',
@@ -37,7 +44,8 @@ const anular = () => {
         <div class="flex flex-wrap items-center gap-2 mb-4">
             <Link href="/compras"><Button label="Volver" icon="pi pi-arrow-left" text /></Link>
             <Tag v-if="anulada" value="ANULADA" severity="danger" />
-            <Button v-else-if="!soloLectura" label="Anular compra" icon="pi pi-times" severity="danger" outlined class="ml-auto" @click="anular" />
+            <Tag v-else-if="conDeuda" :value="ESTADO_PAGO[compra.estado_pago][0]" :severity="ESTADO_PAGO[compra.estado_pago][1]" />
+            <Button v-if="!anulada && !soloLectura" label="Anular compra" icon="pi pi-times" severity="danger" outlined class="ml-auto" @click="anular" />
         </div>
 
         <!-- Errores de negocio (ej. no se puede anular) -->
@@ -96,8 +104,42 @@ const anular = () => {
             </DataTable>
         </section>
 
-        <section class="flex justify-end">
-            <div class="bg-white rounded-xl border border-slate-200 p-4 space-y-2 text-sm w-full sm:w-80">
+        <section class="flex flex-col lg:flex-row gap-6 lg:items-start">
+            <!-- Pago al proveedor (compras al crédito) -->
+            <div v-if="conDeuda" class="flex-1 bg-white rounded-xl border border-slate-200 p-4 text-sm">
+                <div class="flex items-center justify-between mb-3">
+                    <h2 class="font-semibold">Pago al proveedor</h2>
+                    <Link :href="`/cuentas-por-pagar/${compra.id}`">
+                        <Button
+                            :label="puedePagar && Number(compra.saldo) > 0 ? 'Registrar pago' : 'Ver pagos'"
+                            :icon="puedePagar && Number(compra.saldo) > 0 ? 'pi pi-wallet' : 'pi pi-eye'"
+                            :severity="puedePagar && Number(compra.saldo) > 0 ? 'success' : 'info'"
+                            size="small"
+                        />
+                    </Link>
+                </div>
+                <div class="grid grid-cols-3 gap-3 mb-3">
+                    <div class="rounded-lg bg-slate-50 p-2">
+                        <p class="text-xs text-slate-500">Vence</p>
+                        <p class="font-medium" :class="compra.estado_pago === 'vencida' ? 'text-red-600' : ''">{{ fecha(compra.fecha_vencimiento) }}</p>
+                    </div>
+                    <div class="rounded-lg bg-emerald-50 p-2">
+                        <p class="text-xs text-emerald-700">Pagado</p>
+                        <p class="font-medium text-emerald-800">{{ soles(pagado) }}</p>
+                    </div>
+                    <div class="rounded-lg p-2" :class="Number(compra.saldo) > 0 ? 'bg-red-50' : 'bg-emerald-50'">
+                        <p class="text-xs" :class="Number(compra.saldo) > 0 ? 'text-red-700' : 'text-emerald-700'">Saldo</p>
+                        <p class="font-medium" :class="Number(compra.saldo) > 0 ? 'text-red-800' : 'text-emerald-800'">{{ soles(compra.saldo) }}</p>
+                    </div>
+                </div>
+                <p v-if="!pagosActivos.length" class="text-slate-400">Aún no se le ha pagado al proveedor.</p>
+                <div v-for="p in pagosActivos" :key="p.id" class="flex justify-between border-t border-slate-100 py-1.5">
+                    <span>{{ fecha(p.fecha) }} · {{ p.medio_nombre }}<span v-if="p.referencia" class="text-slate-500"> · {{ p.referencia }}</span></span>
+                    <span class="font-medium">{{ soles(p.monto) }}</span>
+                </div>
+            </div>
+
+            <div class="bg-white rounded-xl border border-slate-200 p-4 space-y-2 text-sm w-full lg:w-80 lg:ml-auto">
                 <div class="flex justify-between"><span>Op. gravadas</span><span>{{ soles(compra.op_gravadas) }}</span></div>
                 <div class="flex justify-between"><span>Op. exoneradas</span><span>{{ soles(compra.op_exoneradas) }}</span></div>
                 <div class="flex justify-between"><span>IGV (18%)</span><span>{{ soles(compra.igv) }}</span></div>
