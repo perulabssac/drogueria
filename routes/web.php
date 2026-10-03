@@ -9,6 +9,7 @@ use App\Http\Controllers\ComprobanteController;
 use App\Http\Controllers\CompraController;
 use App\Http\Controllers\ConfiguracionController;
 use App\Http\Controllers\CotizacionController;
+use App\Http\Controllers\CuentaPagarController;
 use App\Http\Controllers\DashboardController;
 use App\Http\Controllers\GuiaController;
 use App\Http\Controllers\KardexController;
@@ -171,6 +172,15 @@ Route::middleware('auth')->group(function () {
         Route::get('/tomas/{toma}', [TomaInventarioController::class, 'show'])->name('tomas.show');
         Route::get('/tomas/{toma}/hoja', [TomaInventarioController::class, 'hoja'])->name('tomas.hoja');
     });
+
+    // Cuentas por pagar a proveedores: consultan almacén y contador
+    Route::middleware('rol:almacen,contador')->group(function () {
+        Route::get('/cuentas-por-pagar', [CuentaPagarController::class, 'index'])->name('cuentas-pagar.index');
+        Route::get('/cuentas-por-pagar/{compra}', [CuentaPagarController::class, 'show'])->name('cuentas-pagar.show');
+    });
+    // Registrar pagos: contador y administrador. Anular un pago: solo el administrador.
+    Route::post('/cuentas-por-pagar/{compra}/pagos', [CuentaPagarController::class, 'pagar'])->middleware('rol:contador')->name('cuentas-pagar.pagar');
+    Route::post('/cuentas-por-pagar/pagos/{pago}/anular', [CuentaPagarController::class, 'anularPago'])->middleware('rol:admin')->name('cuentas-pagar.anular');
 
     // Reportes contables: contador y administrador
     Route::middleware('rol:contador')->group(function () {

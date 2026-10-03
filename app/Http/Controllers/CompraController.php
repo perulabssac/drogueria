@@ -151,6 +151,8 @@ class CompraController extends Controller
                 'op_exoneradas' => $items->where('tipo_afectacion_igv', '!=', '10')->sum('valor'),
                 'igv' => $items->sum('igv'),
                 'total' => $items->sum('total'),
+                // Al crédito se le debe todo al proveedor hasta registrar sus pagos (Cuentas por pagar)
+                'saldo' => $compra->forma_pago === 'credito' ? $items->sum('total') : 0,
             ]);
 
             return $compra;
@@ -165,6 +167,7 @@ class CompraController extends Controller
             'proveedor',
             'usuario:id,name',
             'items.producto:id,codigo,nombre,concentracion,presentacion,unidad_venta',
+            'pagos.usuario:id,name',
         ]);
 
         return Inertia::render('Compras/Show', [
@@ -179,10 +182,13 @@ class CompraController extends Controller
         if ($compra->estado === 'anulada') {
             return back()->with('error', 'Esta compra ya está anulada.');
         }
+        if ($compra->pagos()->where('estado', 'activo')->exists()) {
+            return back()->with('error', 'Esta compra tiene pagos registrados al proveedor: anúlalos primero en Cuentas por pagar.');
+        }
 
         DB::transaction(function () use ($compra, $request, $inventario) {
             $inventario->revertirEntradas($compra, $request->user()->id, 'anulacion_compra');
-            $compra->update(['estado' => 'anulada']);
+            $compra->update(['estado' => 'anulada', 'saldo' => 0]);
         });
 
         return back()->with('success', "Compra {$compra->documento} anulada y stock retirado.");

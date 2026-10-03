@@ -40,6 +40,7 @@ const opciones = [
         ],
     },
     { texto: 'Compras', icono: 'pi pi-truck', url: '/compras', roles: ['almacen', 'contador'] },
+    { texto: 'Cuentas por pagar', icono: 'pi pi-credit-card', url: '/cuentas-por-pagar', roles: ['almacen', 'contador'] },
     { texto: 'Proveedores', icono: 'pi pi-building', url: '/proveedores', roles: ['almacen'] },
     { texto: 'Reportes contables', icono: 'pi pi-chart-bar', url: '/reportes', roles: ['contador'] },
     { texto: 'Usuarios', icono: 'pi pi-users', url: '/usuarios', roles: [] }, // solo admin

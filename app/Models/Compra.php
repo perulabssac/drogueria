@@ -16,10 +16,19 @@ class Compra extends Model
     protected $fillable = [
         'proveedor_id', 'sucursal_id', 'user_id', 'tipo_documento', 'serie', 'numero',
         'fecha_emision', 'forma_pago', 'fecha_vencimiento', 'moneda',
-        'op_gravadas', 'op_exoneradas', 'igv', 'total', 'observaciones', 'estado',
+        'op_gravadas', 'op_exoneradas', 'igv', 'total', 'saldo', 'observaciones', 'estado',
     ];
 
-    protected $appends = ['documento'];
+    protected $appends = ['documento', 'estado_pago'];
+
+    /** Situación del pago al proveedor (se calcula). */
+    public const ESTADOS_PAGO = [
+        'contado' => 'Contado',
+        'pendiente' => 'Por pagar',
+        'vencida' => 'Vencida',
+        'pagada' => 'Pagada',
+        'anulada' => 'Anulada',
+    ];
 
     protected function casts(): array
     {
@@ -30,6 +39,7 @@ class Compra extends Model
             'op_exoneradas' => 'decimal:2',
             'igv' => 'decimal:2',
             'total' => 'decimal:2',
+            'saldo' => 'decimal:2',
         ];
     }
 
@@ -51,6 +61,38 @@ class Compra extends Model
     public function items(): HasMany
     {
         return $this->hasMany(CompraItem::class);
+    }
+
+    /** Pagos hechos al proveedor (solo compras al crédito). */
+    public function pagos(): HasMany
+    {
+        return $this->hasMany(CompraPago::class)->orderBy('fecha')->orderBy('id');
+    }
+
+    public function esCredito(): bool
+    {
+        return $this->forma_pago === 'credito';
+    }
+
+    /** Días de atraso del pago (0 si aún no vence o ya se pagó). */
+    public function diasVencida(): int
+    {
+        if ($this->estado === 'anulada' || (float) $this->saldo <= 0 || ! $this->fecha_vencimiento) {
+            return 0;
+        }
+
+        return max(0, (int) $this->fecha_vencimiento->diffInDays(today(), false));
+    }
+
+    public function getEstadoPagoAttribute(): string
+    {
+        return match (true) {
+            $this->estado === 'anulada' => 'anulada',
+            ! $this->esCredito() => 'contado',
+            (float) $this->saldo <= 0 => 'pagada',
+            $this->diasVencida() > 0 => 'vencida',
+            default => 'pendiente',
+        };
     }
 
     /** Ej: "F001-111535" */
