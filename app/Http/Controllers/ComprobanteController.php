@@ -49,7 +49,7 @@ class ComprobanteController extends Controller
 
     public function show(Request $request, Comprobante $comprobante, NotaCreditoService $notasCredito): Response
     {
-        $comprobante->load(['items', 'cliente', 'cuotas', 'pagos', 'vendedor:id,name', 'usuario:id,name', 'referencia', 'notas']);
+        $comprobante->load(['items', 'cliente', 'cuotas', 'pagos', 'vendedor:id,name', 'usuario:id,name', 'referencia', 'notas', 'guias:id,comprobante_id,serie,correlativo,estado']);
 
         return Inertia::render('Comprobantes/Show', [
             'comprobante' => $comprobante,

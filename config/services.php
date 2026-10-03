@@ -34,6 +34,12 @@ return [
         'url' => env('DECOLECTA_API_URL', 'https://api.decolecta.com'),
     ],
 
+    // Guía de remisión electrónica: API REST de SUNAT (credenciales que se generan en SOL)
+    'sunat_gre' => [
+        'client_id' => env('SUNAT_GRE_CLIENT_ID'),
+        'client_secret' => env('SUNAT_GRE_CLIENT_SECRET'),
+    ],
+
     'slack' => [
         'notifications' => [
             'bot_user_oauth_token' => env('SLACK_BOT_USER_OAUTH_TOKEN'),

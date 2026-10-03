@@ -9,6 +9,7 @@ use App\Http\Controllers\ComprobanteController;
 use App\Http\Controllers\CompraController;
 use App\Http\Controllers\ConfiguracionController;
 use App\Http\Controllers\DashboardController;
+use App\Http\Controllers\GuiaController;
 use App\Http\Controllers\KardexController;
 use App\Http\Controllers\NotaCreditoController;
 use App\Http\Controllers\PerfilController;
@@ -108,6 +109,22 @@ Route::middleware('auth')->group(function () {
         Route::put('/tomas/{toma}/conteo', [TomaInventarioController::class, 'conteo'])->name('tomas.conteo');
         Route::post('/tomas/{toma}/lotes', [TomaInventarioController::class, 'agregarLote'])->name('tomas.lotes');
         Route::post('/tomas/{toma}/anular', [TomaInventarioController::class, 'anular'])->name('tomas.anular');
+    });
+
+    // Guías de remisión: las emiten ventas y almacén (despacho)
+    Route::middleware('rol:vendedor,almacen')->group(function () {
+        Route::get('/guias/nueva', [GuiaController::class, 'create'])->name('guias.create');
+        Route::post('/guias', [GuiaController::class, 'store'])->name('guias.store');
+        Route::post('/guias/{guia}/enviar', [GuiaController::class, 'enviar'])->name('guias.enviar');
+    });
+
+    // Consulta de guías (también el contador). Va después de /guias/nueva.
+    Route::middleware('rol:vendedor,almacen,contador')->group(function () {
+        Route::get('/guias', [GuiaController::class, 'index'])->name('guias.index');
+        Route::get('/guias/{guia}', [GuiaController::class, 'show'])->name('guias.show');
+        Route::get('/guias/{guia}/imprimir', [GuiaController::class, 'imprimir'])->name('guias.imprimir');
+        Route::get('/guias/{guia}/xml', [GuiaController::class, 'xml']);
+        Route::get('/guias/{guia}/cdr', [GuiaController::class, 'cdr']);
     });
 
     // Consulta de comprobantes (solo lectura): vendedores y contador

@@ -26,6 +26,8 @@ const esNotaCredito = computed(() => c.value.tipo_comprobante === '07');
 // El contador solo consulta e imprime/descarga: no reenvía, no cobra ni vende
 const soloLectura = usePage().props.auth.user.rol === 'contador';
 const puedeCobrar = computed(() => !soloLectura && c.value.forma_pago === 'credito' && Number(c.value.saldo) > 0 && !esRechazado.value);
+// Factura o boleta válida: se puede emitir la guía de remisión para despachar la mercadería
+const puedeGuia = computed(() => !soloLectura && ['01', '03'].includes(c.value.tipo_comprobante) && !esRechazado.value);
 const procesando = ref(false);
 
 const accion = (url) =>
@@ -100,8 +102,9 @@ const severidadMensaje = computed(() => ({ aceptado: 'success', observado: 'warn
                 <Link v-if="puedeCobrar" :href="`/cobranzas/${c.id}`">
                     <Button label="Cobrar" icon="pi pi-money-bill" severity="success" />
                 </Link>
-                <Link v-if="puedeNotaCredito" :href="`/comprobantes/${c.id}/nota-credito`">
-                    <Button label="Nota de crédito" icon="pi pi-file-edit" severity="warn" />
+                <!-- Guía de remisión para despachar la mercadería (botón oscuro) -->
+                <Link v-if="puedeGuia" :href="`/guias/nueva?comprobante=${c.id}`">
+                    <Button label="Emitir guía" icon="pi pi-map-marker" severity="contrast" />
                 </Link>
                 <Link v-if="!soloLectura" href="/ventas/nueva"><Button label="Nueva venta" icon="pi pi-plus" /></Link>
             </div>
@@ -159,8 +162,16 @@ const severidadMensaje = computed(() => ({ aceptado: 'success', observado: 'warn
                 <p class="font-medium">{{ c.vendedor?.name ?? c.usuario?.name }}</p>
             </div>
             <div v-if="c.guia_remision">
-                <p class="text-xs text-slate-500">Guía de remisión</p>
+                <p class="text-xs text-slate-500">Guía de remisión (en la factura)</p>
                 <p class="font-medium">{{ c.guia_remision }}</p>
+            </div>
+            <div v-if="c.guias?.length">
+                <p class="text-xs text-slate-500">Guías electrónicas emitidas</p>
+                <div class="flex flex-wrap gap-2 mt-1">
+                    <Link v-for="gr in c.guias" :key="gr.id" :href="`/guias/${gr.id}`">
+                        <Tag :value="gr.numero" :severity="{ aceptado: 'success', rechazado: 'danger', error: 'warn' }[gr.estado] ?? 'info'" class="cursor-pointer" />
+                    </Link>
+                </div>
             </div>
             <div v-if="c.orden_compra">
                 <p class="text-xs text-slate-500">Orden de compra</p>

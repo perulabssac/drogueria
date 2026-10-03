@@ -80,6 +80,12 @@ class Comprobante extends Model
         return $this->hasMany(ComprobanteItem::class);
     }
 
+        /** Guías de remisión electrónicas emitidas desde este comprobante. */
+    public function guias(): HasMany
+    {
+        return $this->hasMany(Guia::class)->orderBy('id');
+    }
+
     public function cuotas(): HasMany
     {
         return $this->hasMany(ComprobanteCuota::class)->orderBy('numero');
