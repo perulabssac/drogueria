@@ -8,6 +8,7 @@ use App\Http\Controllers\CobranzaController;
 use App\Http\Controllers\ComprobanteController;
 use App\Http\Controllers\CompraController;
 use App\Http\Controllers\ConfiguracionController;
+use App\Http\Controllers\CotizacionController;
 use App\Http\Controllers\DashboardController;
 use App\Http\Controllers\GuiaController;
 use App\Http\Controllers\KardexController;
@@ -125,6 +126,22 @@ Route::middleware('auth')->group(function () {
         Route::get('/guias/{guia}/imprimir', [GuiaController::class, 'imprimir'])->name('guias.imprimir');
         Route::get('/guias/{guia}/xml', [GuiaController::class, 'xml']);
         Route::get('/guias/{guia}/cdr', [GuiaController::class, 'cdr']);
+    });
+
+    // Cotizaciones (proformas): las hace el vendedor
+    Route::middleware('rol:vendedor')->group(function () {
+        Route::get('/cotizaciones/nueva', [CotizacionController::class, 'create'])->name('cotizaciones.create');
+        Route::post('/cotizaciones', [CotizacionController::class, 'store'])->name('cotizaciones.store');
+        Route::get('/cotizaciones/{cotizacion}/editar', [CotizacionController::class, 'edit'])->name('cotizaciones.edit');
+        Route::put('/cotizaciones/{cotizacion}', [CotizacionController::class, 'update'])->name('cotizaciones.update');
+        Route::post('/cotizaciones/{cotizacion}/anular', [CotizacionController::class, 'anular'])->name('cotizaciones.anular');
+    });
+
+    // Consulta de cotizaciones (también el contador). Va después de /cotizaciones/nueva.
+    Route::middleware('rol:vendedor,contador')->group(function () {
+        Route::get('/cotizaciones', [CotizacionController::class, 'index'])->name('cotizaciones.index');
+        Route::get('/cotizaciones/{cotizacion}', [CotizacionController::class, 'show'])->name('cotizaciones.show');
+        Route::get('/cotizaciones/{cotizacion}/imprimir', [CotizacionController::class, 'imprimir'])->name('cotizaciones.imprimir');
     });
 
     // Consulta de comprobantes (solo lectura): vendedores y contador

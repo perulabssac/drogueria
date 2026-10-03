@@ -4,6 +4,7 @@ namespace App\Http\Controllers;
 
 use App\Models\Laboratorio;
 use App\Models\Producto;
+use App\Support\ProductoVenta;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\RedirectResponse;
 use Illuminate\Http\Request;
@@ -94,31 +95,13 @@ class ProductoController extends Controller
      */
     public function buscar(Request $request): JsonResponse
     {
-        $sucursalId = $request->user()->sucursal_id;
-
-        $productos = Producto::query()
-            ->where('activo', true)
-            ->with('laboratorio:id,nombre')
-            ->withSum(['lotes as stock' => fn ($q) => $q
-                ->where('sucursal_id', $sucursalId)
-                ->whereDate('fecha_vencimiento', '>=', now()->toDateString())], 'cantidad')
+        $productos = ProductoVenta::consulta($request->user()->sucursal_id)
             ->buscar(trim($request->string('q')->toString()))
             ->orderBy('nombre')
             ->limit(15)
             ->get();
 
-        return response()->json($productos->map(fn (Producto $p) => [
-            ...$p->only([
-                'id', 'codigo', 'nombre', 'concentracion', 'presentacion', 'unidad_venta', 'tipo_afectacion_igv',
-                'condicion_venta', 'controlado', 'cadena_frio', 'fraccionable', 'unidades_por_presentacion', 'unidad_fraccion',
-            ]),
-            'descripcion' => $p->descripcionCompleta(),
-            'laboratorio' => $p->laboratorio?->nombre,
-            'precio_venta' => (float) $p->precio_venta,
-            'precio_fraccion' => $p->precio_fraccion !== null ? (float) $p->precio_fraccion : null,
-            'costo' => (float) $p->costo,
-            'stock' => (float) ($p->stock ?? 0),
-        ]));
+        return response()->json($productos->map(fn (Producto $p) => ProductoVenta::datos($p)));
     }
 
     /** Listas que necesita el formulario de producto. */

@@ -6,8 +6,10 @@ use App\Models\Caja;
 use App\Models\Cliente;
 use App\Models\Comprobante;
 use App\Models\ComprobantePago;
+use App\Models\Cotizacion;
 use App\Models\Serie;
 use App\Models\User;
+use App\Services\CotizacionService;
 use App\Services\Sunat\SunatService;
 use App\Services\VentaService;
 use Illuminate\Http\RedirectResponse;
@@ -18,9 +20,34 @@ use Inertia\Response;
 
 class VentaController extends Controller
 {
-    public function create(Request $request): Response
+    /** Nueva venta. Con ?cotizacion=ID se carga una cotización vigente (cliente, productos y precios cotizados). */
+    public function create(Request $request, CotizacionService $cotizaciones): Response|RedirectResponse
     {
+        $desdeCotizacion = null;
+        if ($request->filled('cotizacion')) {
+            $cotizacion = Cotizacion::query()
+                ->where('sucursal_id', $request->user()->sucursal_id)
+                ->with('cliente')
+                ->findOrFail($request->integer('cotizacion'));
+
+            if (! $cotizacion->vigente()) {
+                return redirect("/cotizaciones/{$cotizacion->id}")
+                    ->with('error', "La cotización {$cotizacion->numero} ya no está vigente (vendida, vencida o anulada).");
+            }
+
+            $desdeCotizacion = [
+                'id' => $cotizacion->id,
+                'numero' => $cotizacion->numero,
+                'cliente' => $cotizacion->cliente->only(CotizacionService::CAMPOS_CLIENTE),
+                'vendedor_id' => $cotizacion->vendedor_id,
+                'forma_pago' => $cotizacion->forma_pago,
+                'observaciones' => $cotizacion->observaciones,
+                'items' => $cotizaciones->lineasParaFormulario($cotizacion, $request->user()->sucursal_id),
+            ];
+        }
+
         return Inertia::render('Ventas/Create', [
+            'cotizacion' => $desdeCotizacion,
             'series' => Serie::query()
                 ->where('sucursal_id', $request->user()->sucursal_id)
                 ->whereIn('tipo_comprobante', ['01', '03', Comprobante::NOTA_VENTA])
@@ -54,6 +81,7 @@ class VentaController extends Controller
             'orden_compra' => ['nullable', 'string', 'max:30'],
             'observaciones' => ['nullable', 'string', 'max:500'],
             'receta_verificada' => ['boolean'],
+            'cotizacion_id' => ['nullable', 'integer', 'exists:cotizaciones,id'],
             'items' => ['required', 'array', 'min:1'],
             'items.*.producto_id' => ['required', 'integer', 'exists:productos,id'],
             'items.*.cantidad' => ['required', 'numeric', 'gt:0'],

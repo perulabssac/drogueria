@@ -24,6 +24,7 @@ const props = defineProps({
     montoIdentificarBoleta: Number,
     mediosPago: Object,
     cajaAbierta: Boolean,
+    cotizacion: { type: Object, default: null }, // venta que nace de una cotización
 });
 
 const TASA_IGV = 0.18;
@@ -37,7 +38,9 @@ const opcionesTipo = [
     { value: 'NV', label: 'Nota de venta' },
 ];
 const NOMBRES = { '01': 'factura', '03': 'boleta', NV: 'nota de venta' };
-const tipo = ref('01');
+// Desde una cotización: factura si el cliente tiene RUC; si no, boleta
+const cot = props.cotizacion;
+const tipo = ref(cot && cot.cliente.tipo_documento !== '6' ? '03' : '01');
 const seriesDelTipo = computed(() => props.series.filter((s) => s.tipo_comprobante === tipo.value));
 const esFactura = computed(() => tipo.value === '01');
 const esBoleta = computed(() => tipo.value === '03');
@@ -47,19 +50,20 @@ const nombreTipo = computed(() => NOMBRES[tipo.value]);
 const form = useForm({
     serie_id: seriesDelTipo.value[0]?.id ?? null,
     cliente_id: null,
-    vendedor_id: usuario.id,
-    forma_pago: 'contado',
+    cotizacion_id: cot?.id ?? null,
+    vendedor_id: cot?.vendedor_id ?? usuario.id,
+    forma_pago: cot && tipo.value === '01' ? cot.forma_pago : 'contado',
     cuotas: [],
     pagos: [{ medio: 'efectivo', monto: 0, recibido: null, referencia: '' }],
     guia_remision: '',
     orden_compra: '',
-    observaciones: '',
+    observaciones: cot?.observaciones ?? '',
     receta_verificada: false,
-    items: [],
+    items: cot?.items ?? [],
 });
 
 // ================= CLIENTE =================
-const cliente = ref(null);
+const cliente = ref(cot?.cliente ?? null);
 const sugerenciasCliente = ref([]);
 const textoCliente = ref(''); // lo que se escribió en el buscador
 const errorBusquedaCliente = ref('');
@@ -229,6 +233,7 @@ watch(
             form.cuotas = [{ monto: totales.value.total, fecha: sumarDias(cliente.value?.dias_credito || 30) }];
         }
     },
+    { immediate: true },
 );
 const agregarCuota = () => form.cuotas.push({ monto: 0, fecha: sumarDias(30 * (form.cuotas.length + 1)) });
 const quitarCuota = (i) => form.cuotas.splice(i, 1);
@@ -257,6 +262,7 @@ watch(
     (t) => {
         if (form.pagos.length === 1) form.pagos[0].monto = redondear(t);
     },
+    { immediate: true },
 );
 // Pago mixto: el nuevo medio propone lo que falta
 const agregarPago = () => form.pagos.push({ medio: 'yape', monto: Math.max(faltaPagar.value, 0), recibido: null, referencia: '' });
@@ -322,6 +328,12 @@ const emitir = () => {
 <template>
     <Head title="Nueva venta" />
     <AppLayout titulo="Nueva venta">
+        <Message v-if="cot" severity="info" class="mb-4">
+            Venta desde la cotización
+            <Link :href="`/cotizaciones/${cot.id}`" class="font-semibold underline">{{ cot.numero }}</Link>
+            con sus precios cotizados. Revisa el stock y el cobro: al emitir, la cotización quedará como <b>vendida</b>.
+        </Message>
+        <Message v-if="form.errors.cotizacion_id" severity="error" class="mb-4">{{ form.errors.cotizacion_id }}</Message>
         <div class="grid grid-cols-1 xl:grid-cols-3 gap-6">
             <!-- ===== IZQUIERDA: PRODUCTOS ===== -->
             <section class="xl:col-span-2 bg-white rounded-xl border border-slate-200 self-start">

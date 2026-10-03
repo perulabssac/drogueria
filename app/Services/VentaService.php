@@ -32,11 +32,12 @@ class VentaService
     public function __construct(
         private InventarioService $inventario,
         private CajaService $cajas,
+        private CotizacionService $cotizaciones,
     ) {}
 
     /**
      * @param  array  $datos  serie_id, cliente_id, vendedor_id, forma_pago, cuotas[], pagos[], guia_remision,
-     *                        orden_compra, observaciones, receta_verificada, items[]
+     *                        orden_compra, observaciones, receta_verificada, cotizacion_id, items[]
      *                        items[]: producto_id, cantidad, por_fraccion, precio_unitario, bonificacion
      *                        pagos[]: medio, monto, recibido, referencia
      */
@@ -145,6 +146,11 @@ class VentaService
                 $comprobante->update(['saldo' => $comprobante->total]);
             } else {
                 $this->registrarPagos($comprobante, $datos['pagos'] ?? [], $usuario, $caja);
+            }
+
+            // Venta que nace de una cotización: la cotización queda como vendida (no se puede usar dos veces)
+            if (! empty($datos['cotizacion_id'])) {
+                $this->cotizaciones->marcarVendida((int) $datos['cotizacion_id'], $comprobante);
             }
 
             return $comprobante;
