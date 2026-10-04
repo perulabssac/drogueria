@@ -4,6 +4,8 @@ namespace App\Http\Controllers;
 
 use App\Models\Comprobante;
 use App\Models\Empresa;
+use App\Services\ComprobantePdfService;
+use App\Services\EnvioComprobanteService;
 use App\Services\NotaCreditoService;
 use App\Services\Sunat\BajaService;
 use App\Services\Sunat\SunatService;
@@ -48,9 +50,12 @@ class ComprobanteController extends Controller
         ]);
     }
 
-    public function show(Request $request, Comprobante $comprobante, NotaCreditoService $notasCredito): Response
+    public function show(Request $request, Comprobante $comprobante, NotaCreditoService $notasCredito, ComprobantePdfService $pdf): Response
     {
-        $comprobante->load(['items', 'cliente', 'cuotas', 'pagos', 'vendedor:id,name', 'usuario:id,name', 'referencia', 'notas', 'guias:id,comprobante_id,serie,correlativo,estado', 'bajaUsuario:id,name']);
+        $comprobante->load([
+            'items', 'cliente', 'cuotas', 'pagos', 'vendedor:id,name', 'usuario:id,name', 'referencia', 'notas',
+            'guias:id,comprobante_id,serie,correlativo,estado', 'bajaUsuario:id,name', 'envios.usuario:id,name',
+        ]);
         $esAdmin = $request->user()->tieneRol('admin');
 
         return Inertia::render('Comprobantes/Show', [
@@ -63,6 +68,8 @@ class ComprobanteController extends Controller
             'limiteBaja' => in_array($comprobante->tipo_comprobante, ['01', '03'], true)
                 ? $comprobante->fechaLimiteBaja()->toDateString()
                 : null,
+            // Enlace público al PDF para enviarlo por WhatsApp (solo comprobantes válidos)
+            'enlacePublico' => $comprobante->tieneValidez() ? $pdf->enlacePublico($comprobante) : null,
         ]);
     }
 
@@ -143,6 +150,37 @@ class ComprobanteController extends Controller
         abort_unless($comprobante->cdr_path && Storage::disk('local')->exists($comprobante->cdr_path), 404, 'Aún no hay CDR de SUNAT.');
 
         return Storage::disk('local')->download($comprobante->cdr_path);
+    }
+
+    /** Envía el comprobante al correo del cliente (PDF, XML y CDR adjuntos). */
+    public function correo(Request $request, Comprobante $comprobante, EnvioComprobanteService $envios): RedirectResponse
+    {
+        abort_unless($comprobante->tieneValidez(), 422, 'Este comprobante no tiene validez: no se puede enviar.');
+
+        $datos = $request->validate([
+            'correo' => ['required', 'email:rfc', 'max:150'],
+            'mensaje' => ['nullable', 'string', 'max:500'],
+            'guardar' => ['boolean'],
+        ], [
+            'correo.required' => 'Indica el correo del cliente.',
+            'correo.email' => 'El correo no es válido.',
+        ]);
+
+        $envio = $envios->enviarCorreo($comprobante, trim($datos['correo']), $datos['mensaje'] ?? null, $request->user(), (bool) ($datos['guardar'] ?? false));
+
+        return $envio->estado === 'enviado'
+            ? back()->with('success', "Comprobante {$comprobante->numero} enviado a {$envio->destino}.")
+            : back()->with('error', 'No se pudo enviar el correo: '.$envio->error);
+    }
+
+    /** Registra que se abrió WhatsApp con el comprobante (el envío lo hace el vendedor desde WhatsApp). */
+    public function whatsapp(Request $request, Comprobante $comprobante, EnvioComprobanteService $envios): RedirectResponse
+    {
+        $datos = $request->validate(['celular' => ['required', 'string', 'regex:/^\d{9,15}$/']]);
+
+        $envios->registrarWhatsapp($comprobante, $datos['celular'], $request->user());
+
+        return back();
     }
 
     /** Comunicación de baja: anula ante SUNAT una factura o boleta aceptada (solo administrador). */

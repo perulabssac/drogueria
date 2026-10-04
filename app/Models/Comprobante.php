@@ -142,6 +142,12 @@ class Comprobante extends Model
         return $this->hasMany(Comprobante::class, 'comprobante_referencia_id');
     }
 
+    /** Envíos al cliente por correo o WhatsApp (el último primero). */
+    public function envios(): HasMany
+    {
+        return $this->hasMany(ComprobanteEnvio::class)->latest('id');
+    }
+
     /** Usuario que solicitó la comunicación de baja. */
     public function bajaUsuario(): BelongsTo
     {

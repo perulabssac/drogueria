@@ -6,6 +6,7 @@ use App\Http\Controllers\CajaController;
 use App\Http\Controllers\ClienteController;
 use App\Http\Controllers\CobranzaController;
 use App\Http\Controllers\ComprobanteController;
+use App\Http\Controllers\ComprobantePublicoController;
 use App\Http\Controllers\CompraController;
 use App\Http\Controllers\ConfiguracionController;
 use App\Http\Controllers\CotizacionController;
@@ -30,6 +31,12 @@ Route::middleware('guest')->group(function () {
     Route::get('/login', [AuthController::class, 'create'])->name('login');
     Route::post('/login', [AuthController::class, 'store'])->middleware('throttle:10,1');
 });
+
+// Enlace público y firmado al PDF del comprobante (se envía por WhatsApp o correo).
+// No requiere iniciar sesión: sin una firma válida responde 403.
+Route::get('/c/{comprobante}', [ComprobantePublicoController::class, 'pdf'])
+    ->middleware(['signed', 'throttle:30,1'])
+    ->name('comprobantes.publico');
 
 // Solo para usuarios logueados
 Route::middleware('auth')->group(function () {
@@ -63,6 +70,10 @@ Route::middleware('auth')->group(function () {
         Route::post('/comprobantes/{comprobante}/reenviar', [ComprobanteController::class, 'reenviar']);
         Route::post('/comprobantes/{comprobante}/consultar', [ComprobanteController::class, 'consultar']);
         Route::post('/comprobantes/{comprobante}/baja/consultar', [ComprobanteController::class, 'consultarBaja']);
+        
+        // Enviar el comprobante al cliente
+        Route::post('/comprobantes/{comprobante}/correo', [ComprobanteController::class, 'correo'])->middleware('throttle:20,1');
+        Route::post('/comprobantes/{comprobante}/whatsapp', [ComprobanteController::class, 'whatsapp']);
 
         // Caja del usuario (turno)
         Route::get('/caja', [CajaController::class, 'actual'])->name('caja.actual');

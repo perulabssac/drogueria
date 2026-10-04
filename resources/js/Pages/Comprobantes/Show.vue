@@ -10,6 +10,8 @@ import Message from 'primevue/message';
 import Menu from 'primevue/menu';
 import Dialog from 'primevue/dialog';
 import Textarea from 'primevue/textarea';
+import InputText from 'primevue/inputtext';
+import Checkbox from 'primevue/checkbox';
 import { soles, precio, fecha, cantidad } from '@/utils/formato';
 import { estadoSunat } from '@/utils/sunat';
 
@@ -19,6 +21,7 @@ const props = defineProps({
     puedeNotaCredito: Boolean,
     puedeBaja: Boolean,
     limiteBaja: String,
+    enlacePublico: String,
 });
 
 const c = computed(() => props.comprobante);
@@ -35,6 +38,8 @@ const soloLectura = usePage().props.auth.user.rol === 'contador';
 const puedeCobrar = computed(() => !soloLectura && c.value.forma_pago === 'credito' && Number(c.value.saldo) > 0 && !sinValidez.value);
 // Factura o boleta válida: se puede emitir la guía de remisión para despachar la mercadería
 const puedeGuia = computed(() => !soloLectura && ['01', '03'].includes(c.value.tipo_comprobante) && !sinValidez.value);
+// Enviar al cliente (correo / WhatsApp): solo comprobantes aceptados por SUNAT o notas de venta
+const puedeEnviar = computed(() => !soloLectura && ['aceptado', 'observado', 'interno'].includes(c.value.estado));
 const procesando = ref(false);
 
 const accion = (url) =>
@@ -95,6 +100,56 @@ const BAJA = {
     error: { severidad: 'warn', titulo: 'La comunicación de baja no llegó a SUNAT' },
 };
 const baja = computed(() => BAJA[c.value.baja_estado] ?? null);
+
+// ===== Enviar por correo =====
+const dialogoCorreo = ref(false);
+const formCorreo = useForm({ correo: '', mensaje: '', guardar: true });
+
+const abrirCorreo = () => {
+    formCorreo.clearErrors();
+    formCorreo.correo = c.value.cliente.email ?? '';
+    formCorreo.mensaje = '';
+    formCorreo.guardar = !c.value.cliente.email; // si el cliente no tenía correo, se le guarda
+    dialogoCorreo.value = true;
+};
+
+const enviarCorreo = () =>
+    formCorreo.post(`/comprobantes/${c.value.id}/correo`, {
+        preserveScroll: true,
+        onSuccess: () => (dialogoCorreo.value = false),
+    });
+
+// ===== Enviar por WhatsApp =====
+// Se abre WhatsApp (web o app) con el mensaje listo; el vendedor solo presiona "Enviar".
+const dialogoWhatsapp = ref(false);
+const celular = ref('');
+
+// Solo dígitos; un celular peruano de 9 dígitos se completa con el código de país 51
+const numeroWhatsapp = computed(() => {
+    const d = celular.value.replace(/\D/g, '');
+    return d.length === 9 && d.startsWith('9') ? '51' + d : d;
+});
+const celularValido = computed(() => numeroWhatsapp.value.length >= 11 && numeroWhatsapp.value.length <= 15);
+
+const textoWhatsapp = computed(() =>
+    [
+        `Hola ${c.value.cliente.razon_social}, le enviamos su ${c.value.tipo_nombre} ${c.value.numero} por ${soles(c.value.total)}.`,
+        `Puede verla y descargarla aquí: ${props.enlacePublico}`,
+        '¡Gracias por su preferencia!',
+    ].join('\n'),
+);
+
+const abrirWhatsapp = () => {
+    celular.value = c.value.cliente.telefono ?? '';
+    dialogoWhatsapp.value = true;
+};
+
+const enviarWhatsapp = () => {
+    // Se abre en el mismo clic (si no, el navegador lo bloquea como ventana emergente)
+    window.open(`https://wa.me/${numeroWhatsapp.value}?text=${encodeURIComponent(textoWhatsapp.value)}`, '_blank');
+    router.post(`/comprobantes/${c.value.id}/whatsapp`, { celular: numeroWhatsapp.value }, { preserveScroll: true });
+    dialogoWhatsapp.value = false;
+};
 </script>
 
 <template>
@@ -130,6 +185,12 @@ const baja = computed(() => BAJA[c.value.baja_estado] ?? null);
                     <a :href="`/comprobantes/${c.id}/imprimir?formato=ticket`" target="_blank">
                         <Button icon="pi pi-eye" severity="info" v-tooltip.top="'Vista previa'" />
                     </a>
+                </template>
+
+                <!-- Enviar al cliente: correo (índigo) y WhatsApp (verde de WhatsApp) -->
+                <template v-if="puedeEnviar">
+                    <Button label="Correo" icon="pi pi-envelope" style="background: #4f46e5; border-color: #4f46e5; color: #fff" @click="abrirCorreo" />
+                    <Button v-if="enlacePublico" label="WhatsApp" icon="pi pi-whatsapp" style="background: #25d366; border-color: #25d366; color: #fff" @click="abrirWhatsapp" />
                 </template>
 
                 <!-- Venta al crédito con saldo: registrar el cobro de una cuota -->
@@ -312,6 +373,64 @@ const baja = computed(() => BAJA[c.value.baja_estado] ?? null);
             </section>
         </div>
 
+        <!-- Historial de envíos al cliente -->
+        <section v-if="c.envios?.length" class="bg-white rounded-xl border border-slate-200 p-5 text-sm mt-6">
+            <h2 class="font-semibold mb-3">Envíos al cliente</h2>
+            <div v-for="en in c.envios" :key="en.id" class="flex flex-wrap items-center gap-2 py-1.5 border-b border-slate-100 last:border-0">
+                <i :class="en.canal === 'correo' ? 'pi pi-envelope text-indigo-600' : 'pi pi-whatsapp text-green-600'"></i>
+                <span class="font-medium">{{ en.canal_nombre }}</span>
+                <span class="text-slate-600">{{ en.destino }}</span>
+                <Tag v-if="en.estado === 'error'" value="No se envió" severity="danger" v-tooltip.top="en.error" />
+                <span class="ml-auto text-slate-500">{{ en.usuario?.name }} · {{ fecha(en.created_at) }} {{ String(en.created_at).substring(11, 16) }}</span>
+            </div>
+        </section>
+
+        <!-- Diálogo: enviar por correo -->
+        <Dialog v-model:visible="dialogoCorreo" modal :header="`Enviar ${c.tipo_nombre} ${c.numero} por correo`" :style="{ width: '32rem' }">
+            <div class="space-y-4">
+                <div class="flex flex-col gap-1">
+                    <label class="text-sm">Correo del cliente *</label>
+                    <InputText v-model="formCorreo.correo" type="email" placeholder="cliente@empresa.com" fluid autofocus />
+                    <small class="text-red-600">{{ formCorreo.errors.correo }}</small>
+                </div>
+                <div class="flex flex-col gap-1">
+                    <label class="text-sm">Mensaje adicional (opcional)</label>
+                    <Textarea v-model="formCorreo.mensaje" rows="2" maxlength="500" autoResize fluid placeholder="Ej.: Gracias por su compra. Su pedido sale hoy." />
+                </div>
+                <label v-if="c.cliente.numero_documento !== '00000000'" class="flex items-center gap-2 text-sm">
+                    <Checkbox v-model="formCorreo.guardar" binary />
+                    Guardar este correo en la ficha del cliente
+                </label>
+                <p class="text-xs text-slate-500">
+                    Se adjuntan el PDF<span v-if="c.xml_path">, el XML</span><span v-if="c.cdr_path"> y el CDR de SUNAT</span>, con un enlace para verlo en línea.
+                </p>
+            </div>
+            <template #footer>
+                <Button label="Cancelar" severity="secondary" text @click="dialogoCorreo = false" />
+                <Button label="Enviar correo" icon="pi pi-send" style="background: #4f46e5; border-color: #4f46e5; color: #fff" :loading="formCorreo.processing" :disabled="!formCorreo.correo" @click="enviarCorreo" />
+            </template>
+        </Dialog>
+
+        <!-- Diálogo: enviar por WhatsApp -->
+        <Dialog v-model:visible="dialogoWhatsapp" modal :header="`Enviar ${c.tipo_nombre} ${c.numero} por WhatsApp`" :style="{ width: '32rem' }">
+            <div class="space-y-4">
+                <div class="flex flex-col gap-1">
+                    <label class="text-sm">Celular del cliente *</label>
+                    <InputText v-model="celular" placeholder="987654321" inputmode="tel" fluid autofocus />
+                    <small class="text-slate-500">9 dígitos para Perú; para otro país, con su código (ej.: 573001234567).</small>
+                </div>
+                <div>
+                    <p class="text-sm mb-1">Mensaje que se enviará:</p>
+                    <p class="text-sm whitespace-pre-line bg-green-50 border border-green-200 rounded-lg p-3 break-all">{{ textoWhatsapp }}</p>
+                </div>
+                <p class="text-xs text-slate-500">Se abrirá WhatsApp con el mensaje listo: solo presiona "Enviar". El enlace vence en 90 días.</p>
+            </div>
+            <template #footer>
+                <Button label="Cancelar" severity="secondary" text @click="dialogoWhatsapp = false" />
+                <Button label="Abrir WhatsApp" icon="pi pi-whatsapp" style="background: #25d366; border-color: #25d366; color: #fff" :disabled="!celularValido" @click="enviarWhatsapp" />
+            </template>
+        </Dialog>
+
         <!-- Diálogo: comunicación de baja -->
         <Dialog v-model:visible="dialogoBaja" modal :header="`Dar de baja ${c.tipo_nombre} ${c.numero}`" :style="{ width: '32rem' }">
             <Message severity="warn" class="mb-4">
@@ -329,7 +448,7 @@ const baja = computed(() => BAJA[c.value.baja_estado] ?? null);
                     <small class="text-slate-400">{{ formBaja.motivo.length }}/100</small>
                 </div>
                 <div class="flex flex-wrap gap-2 mt-1">
-                                        <Button
+                    <Button
                         v-for="m in MOTIVOS_BAJA"
                         :key="m"
                         :label="m"
