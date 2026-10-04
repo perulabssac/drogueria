@@ -24,7 +24,7 @@ class NotaCreditoController extends Controller
             return redirect("/comprobantes/{$comprobante->id}")->with('error', $error);
         }
 
-        $comprobante->load(['items', 'cliente', 'notas' => fn ($q) => $q->where('estado', '!=', 'rechazado')]);
+        $comprobante->load(['items', 'cliente', 'notas' => fn ($q) => $q->validos()]);
 
         return Inertia::render('Comprobantes/NotaCredito', [
             'comprobante' => $comprobante,

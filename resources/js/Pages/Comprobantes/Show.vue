@@ -1,6 +1,6 @@
 <script setup>
 import { computed, ref } from 'vue';
-import { Head, Link, router, usePage } from '@inertiajs/vue3';
+import { Head, Link, router, useForm, usePage } from '@inertiajs/vue3';
 import AppLayout from '@/Layouts/AppLayout.vue';
 import DataTable from 'primevue/datatable';
 import Column from 'primevue/column';
@@ -8,6 +8,8 @@ import Button from 'primevue/button';
 import Tag from 'primevue/tag';
 import Message from 'primevue/message';
 import Menu from 'primevue/menu';
+import Dialog from 'primevue/dialog';
+import Textarea from 'primevue/textarea';
 import { soles, precio, fecha, cantidad } from '@/utils/formato';
 import { estadoSunat } from '@/utils/sunat';
 
@@ -15,19 +17,24 @@ const props = defineProps({
     comprobante: Object,
     puedeReenviarse: Boolean,
     puedeNotaCredito: Boolean,
+    puedeBaja: Boolean,
+    limiteBaja: String,
 });
 
 const c = computed(() => props.comprobante);
 const estado = computed(() => estadoSunat(c.value.estado));
 const esInterno = computed(() => c.value.tipo_comprobante === 'NV');
 const esRechazado = computed(() => c.value.estado === 'rechazado');
+const esAnulado = computed(() => c.value.estado === 'anulado');
+// Rechazado por SUNAT o dado de baja: no tiene validez (no se imprime, no se cobra, no se despacha)
+const sinValidez = computed(() => esRechazado.value || esAnulado.value);
 const esNotaCredito = computed(() => c.value.tipo_comprobante === '07');
 // Venta al crédito que aún tiene deuda: se muestra el botón "Cobrar"
 // El contador solo consulta e imprime/descarga: no reenvía, no cobra ni vende
 const soloLectura = usePage().props.auth.user.rol === 'contador';
-const puedeCobrar = computed(() => !soloLectura && c.value.forma_pago === 'credito' && Number(c.value.saldo) > 0 && !esRechazado.value);
+const puedeCobrar = computed(() => !soloLectura && c.value.forma_pago === 'credito' && Number(c.value.saldo) > 0 && !sinValidez.value);
 // Factura o boleta válida: se puede emitir la guía de remisión para despachar la mercadería
-const puedeGuia = computed(() => !soloLectura && ['01', '03'].includes(c.value.tipo_comprobante) && !esRechazado.value);
+const puedeGuia = computed(() => !soloLectura && ['01', '03'].includes(c.value.tipo_comprobante) && !sinValidez.value);
 const procesando = ref(false);
 
 const accion = (url) =>
@@ -58,10 +65,36 @@ const menuDescargas = ref();
 const descargas = computed(() => [
     { label: 'XML (comprobante electrónico)', icon: 'pi pi-file', url: `/comprobantes/${c.value.id}/xml`, visible: !!c.value.xml_path },
     { label: 'CDR (constancia de SUNAT)', icon: 'pi pi-verified', url: `/comprobantes/${c.value.id}/cdr`, visible: !!c.value.cdr_path },
+    { label: 'CDR de la baja', icon: 'pi pi-ban', url: `/comprobantes/${c.value.id}/baja/cdr`, visible: !!c.value.baja_cdr_path },
 ]);
 const hayDescargas = computed(() => descargas.value.some((d) => d.visible));
 
-const severidadMensaje = computed(() => ({ aceptado: 'success', observado: 'warn', enviado: 'info', pendiente: 'secondary' })[c.value.estado] ?? 'error');
+const severidadMensaje = computed(() => ({ aceptado: 'success', observado: 'warn', enviado: 'info', pendiente: 'secondary', anulado: 'secondary' })[c.value.estado] ?? 'error');
+
+// ===== Comunicación de baja (anular ante SUNAT dentro de los 7 días) =====
+const dialogoBaja = ref(false);
+const formBaja = useForm({ motivo: '' });
+const MOTIVOS_BAJA = ['Error en los datos del cliente', 'Error en los productos o montos', 'Venta no realizada'];
+
+const abrirBaja = () => {
+    formBaja.reset();
+    formBaja.clearErrors();
+    dialogoBaja.value = true;
+};
+
+const enviarBaja = () =>
+    formBaja.post(`/comprobantes/${c.value.id}/baja`, {
+        preserveScroll: true,
+        onSuccess: () => (dialogoBaja.value = false),
+    });
+
+const BAJA = {
+    enviada: { severidad: 'info', titulo: 'Comunicación de baja en proceso' },
+    aceptada: { severidad: 'secondary', titulo: 'Dado de baja ante SUNAT' },
+    rechazada: { severidad: 'error', titulo: 'SUNAT rechazó la comunicación de baja' },
+    error: { severidad: 'warn', titulo: 'La comunicación de baja no llegó a SUNAT' },
+};
+const baja = computed(() => BAJA[c.value.baja_estado] ?? null);
 </script>
 
 <template>
@@ -74,10 +107,11 @@ const severidadMensaje = computed(() => ({ aceptado: 'success', observado: 'warn
             <div class="ml-auto flex flex-wrap gap-2">
                 <Button v-if="puedeReenviarse && !soloLectura" label="Reenviar a SUNAT" icon="pi pi-refresh" :loading="procesando" @click="accion(`/comprobantes/${c.id}/reenviar`)" />
                 <Button v-if="c.estado === 'enviado' && !soloLectura" label="Consultar respuesta" icon="pi pi-sync" :loading="procesando" @click="accion(`/comprobantes/${c.id}/consultar`)" />
+                <Button v-if="c.baja_estado === 'enviada' && !soloLectura" label="Consultar baja" icon="pi pi-sync" severity="secondary" :loading="procesando" @click="accion(`/comprobantes/${c.id}/baja/consultar`)" />
 
                 <!-- Archivos electrónicos (XML y CDR) agrupados en un menú -->
                 <template v-if="hayDescargas">
-                        <Button severity="help" @click="(e) => menuDescargas.toggle(e)">
+                    <Button severity="help" @click="(e) => menuDescargas.toggle(e)">
                         <template #default>
                             <i class="pi pi-download"></i>
                             <span>Descargar</span>
@@ -87,8 +121,8 @@ const severidadMensaje = computed(() => ({ aceptado: 'success', observado: 'warn
                     <Menu ref="menuDescargas" :model="descargas" popup />
                 </template>
 
-                <!-- Un comprobante rechazado no tiene validez: no se imprime -->
-                <template v-if="!esRechazado">
+                <!-- Un comprobante rechazado o dado de baja no tiene validez: no se imprime -->
+                <template v-if="!sinValidez">
                     <!-- Botones de impresión en azul para ubicarlos rápido -->
                     <Button label="Ticket" icon="pi pi-receipt" severity="info" :loading="imprimiendo === 'ticket'" @click="imprimir('ticket')" />
                     <Button label="Imprimir A4" icon="pi pi-print" severity="info" :loading="imprimiendo === 'a4'" @click="imprimir('a4')" />
@@ -106,6 +140,12 @@ const severidadMensaje = computed(() => ({ aceptado: 'success', observado: 'warn
                 <Link v-if="puedeGuia" :href="`/guias/nueva?comprobante=${c.id}`">
                     <Button label="Emitir guía" icon="pi pi-map-marker" severity="contrast" />
                 </Link>
+                <!-- Nota de crédito (anulación o devolución): solo administrador -->
+                <Link v-if="puedeNotaCredito" :href="`/comprobantes/${c.id}/nota-credito`">
+                    <Button label="Nota de crédito" icon="pi pi-file-edit" severity="warn" />
+                </Link>
+                <!-- Comunicación de baja (rojo): anula el comprobante ante SUNAT, solo administrador -->
+                <Button v-if="puedeBaja" label="Dar de baja" icon="pi pi-ban" severity="danger" @click="abrirBaja" />
                 <Link v-if="!soloLectura" href="/ventas/nueva"><Button label="Nueva venta" icon="pi pi-plus" /></Link>
             </div>
         </div>
@@ -139,6 +179,25 @@ const severidadMensaje = computed(() => ({ aceptado: 'success', observado: 'warn
             <p v-if="c.resumen" class="text-xs mt-1">Informado en el resumen {{ c.resumen }} · Ticket {{ c.ticket }}</p>
             <p v-if="esRechazado" class="text-sm mt-2 font-medium">
                 Este comprobante no tiene validez y su stock ya volvió a los lotes. Corrige el dato indicado y emite una venta nueva.
+            </p>
+        </Message>
+
+        <!-- Comunicación de baja -->
+        <Message v-if="baja" :severity="baja.severidad" class="mb-4">
+            <p class="font-semibold">{{ baja.titulo }}<span v-if="c.baja_documento"> · {{ c.baja_documento }}</span></p>
+            <p class="text-sm mt-1">
+                Motivo: {{ c.baja_motivo }}
+                <span v-if="c.baja_usuario"> · Solicitada por {{ c.baja_usuario.name }}</span>
+                <span v-if="c.baja_at"> el {{ fecha(c.baja_at) }} {{ String(c.baja_at).substring(11, 16) }}</span>
+            </p>
+            <p v-if="c.baja_descripcion" class="text-sm mt-1">
+                <span v-if="c.baja_codigo" class="font-semibold">Código {{ c.baja_codigo }}: </span>{{ c.baja_descripcion }}
+            </p>
+            <p v-if="esAnulado" class="text-sm mt-2 font-medium">
+                Este comprobante ya no tiene validez: la mercadería volvió al stock y no cuenta en ventas, caja ni deudas.
+            </p>
+            <p v-else-if="['rechazada', 'error'].includes(c.baja_estado)" class="text-sm mt-2 font-medium">
+                El comprobante sigue válido. Puedes volver a intentar la baja o anularlo con una nota de crédito.
             </p>
         </Message>
 
@@ -252,5 +311,40 @@ const severidadMensaje = computed(() => ({ aceptado: 'success', observado: 'warn
                 <div class="flex justify-between text-lg font-semibold border-t pt-2"><span>Total</span><span>{{ soles(c.total) }}</span></div>
             </section>
         </div>
+
+        <!-- Diálogo: comunicación de baja -->
+        <Dialog v-model:visible="dialogoBaja" modal :header="`Dar de baja ${c.tipo_nombre} ${c.numero}`" :style="{ width: '32rem' }">
+            <Message severity="warn" class="mb-4">
+                <p class="text-sm">
+                    Se anulará ante SUNAT. El comprobante dejará de tener validez, la mercadería volverá al stock y ya no contará en ventas ni caja.
+                    <b>No se puede deshacer.</b>
+                </p>
+                <p v-if="limiteBaja" class="text-sm mt-1">Plazo para comunicar la baja: hasta el {{ fecha(limiteBaja) }}.</p>
+            </Message>
+            <div class="flex flex-col gap-1">
+                <label class="text-sm">Motivo de la baja *</label>
+                <Textarea v-model="formBaja.motivo" rows="2" maxlength="100" autoResize fluid placeholder="Ej.: Error en los datos del cliente" />
+                <div class="flex justify-between">
+                    <small class="text-red-600">{{ formBaja.errors.motivo }}</small>
+                    <small class="text-slate-400">{{ formBaja.motivo.length }}/100</small>
+                </div>
+                <div class="flex flex-wrap gap-2 mt-1">
+                                        <Button
+                        v-for="m in MOTIVOS_BAJA"
+                        :key="m"
+                        :label="m"
+                        size="small"
+                        :severity="formBaja.motivo === m ? 'danger' : 'secondary'"
+                        :outlined="formBaja.motivo !== m"
+                        :icon="formBaja.motivo === m ? 'pi pi-check' : undefined"
+                        @click="formBaja.motivo = m"
+                    />
+                </div>
+            </div>
+            <template #footer>
+                <Button label="Cancelar" severity="secondary" text @click="dialogoBaja = false" />
+                <Button label="Dar de baja" icon="pi pi-ban" severity="danger" :loading="formBaja.processing" :disabled="formBaja.motivo.trim().length < 3" @click="enviarBaja" />
+            </template>
+        </Dialog>
     </AppLayout>
 </template>

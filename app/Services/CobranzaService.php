@@ -28,7 +28,7 @@ class CobranzaService
 
         $notas = Comprobante::query()
             ->where('comprobante_referencia_id', $comprobante->id)
-            ->where('estado', '!=', 'rechazado')
+            ->validos()
             ->get(['id', 'total']);
 
         $devuelto = $notas->isEmpty() ? 0.0 : (float) CajaMovimiento::query()
@@ -43,7 +43,7 @@ class CobranzaService
     /** Recalcula y guarda el saldo. Solo las ventas al crédito válidas tienen deuda. */
     public static function recalcularSaldo(Comprobante $comprobante): float
     {
-        $saldo = $comprobante->esCredito() && $comprobante->estado !== 'rechazado'
+        $saldo = $comprobante->esCredito() && $comprobante->tieneValidez()
             ? max(0, self::balance($comprobante))
             : 0;
 
@@ -55,11 +55,21 @@ class CobranzaService
     /** Motivo por el que no se puede cobrar este comprobante (null si se puede). */
     public static function impedimento(Comprobante $comprobante, User $usuario): ?string
     {
-        if (! $comprobante->esCredito()) {
-            return 'Esta venta fue al contado: no tiene saldo por cobrar.';
+                if (! $comprobante->tieneValidez()) {
+            return $comprobante->estado === 'anulado'
+                ? 'Este comprobante fue dado de baja ante SUNAT: ya no genera deuda.'
+                : 'SUNAT rechazó este comprobante: no genera deuda. Emite una nueva venta.';
         }
-        if ($comprobante->estado === 'rechazado') {
-            return 'SUNAT rechazó este comprobante: no genera deuda. Emite una nueva venta.';
+        if ($comprobante->baja_estado === 'enviada') {
+            return 'Este comprobante tiene una comunicación de baja en proceso.';
+        }
+        if (! $comprobante->tieneValidez()) {
+            return $comprobante->estado === 'anulado'
+                ? 'Este comprobante fue dado de baja ante SUNAT: ya no genera deuda.'
+                : 'SUNAT rechazó este comprobante: no genera deuda. Emite una nueva venta.';
+        }
+        if ($comprobante->baja_estado === 'enviada') {
+            return 'Este comprobante tiene una comunicación de baja en proceso.';
         }
         if ((int) $comprobante->sucursal_id !== (int) $usuario->sucursal_id && ! $usuario->tieneRol('admin')) {
             return 'Este comprobante es de otra sucursal.';

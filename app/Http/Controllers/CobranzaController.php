@@ -31,7 +31,7 @@ class CobranzaController extends Controller
         $base = fn () => Comprobante::query()
             ->where('sucursal_id', $request->user()->sucursal_id)
             ->where('forma_pago', 'credito')
-            ->where('estado', '!=', 'rechazado');
+            ->validos();
 
         $cuentas = $base()
             ->with(['cliente:id,razon_social,numero_documento,telefono', 'cuotas'])
@@ -109,7 +109,7 @@ class CobranzaController extends Controller
         $otras = Comprobante::query()
             ->where('cliente_id', $comprobante->cliente_id)
             ->where('forma_pago', 'credito')
-            ->where('estado', '!=', 'rechazado')
+            ->validos()
             ->where('saldo', '>', 0)
             ->whereKeyNot($comprobante->id)
             ->orderBy('fecha_vencimiento')

@@ -201,13 +201,18 @@ class SunatService
         $this->devolverStockSiRechazado($comprobante);
     }
 
-    /** Número de resumen del día: se bloquea la fila de la empresa para que no se repita. */
-    private function siguienteCorrelativoResumen(): int
+    /**
+     * Número de resumen del día. Cuenta los resúmenes de boletas y los de bajas de boletas,
+     * porque comparten la numeración RC-AAAAMMDD-n. Se bloquea la empresa para que no se repita.
+     */
+    public function siguienteCorrelativoResumen(): int
     {
         return DB::transaction(function () {
             Empresa::query()->lockForUpdate()->first();
+            $prefijo = 'RC-'.now()->format('Ymd').'-%';
 
-            return Comprobante::query()->where('resumen', 'like', 'RC-'.now()->format('Ymd').'-%')->count() + 1;
+            return Comprobante::query()->where('resumen', 'like', $prefijo)->count()
+                + Comprobante::query()->where('baja_documento', 'like', $prefijo)->count() + 1;
         });
     }
 

@@ -135,7 +135,7 @@ const imprimir = () => {
                             <tr v-if="!pagos.length">
                                 <td class="p-6 text-center text-slate-400">Sin ventas ni cobranzas.</td>
                             </tr>
-                            <tr v-for="p in pagos" :key="p.id" class="border-t border-slate-100" :class="{ 'opacity-50 line-through': p.comprobante.estado === 'rechazado' }">
+                            <tr v-for="p in pagos" :key="p.id" class="border-t border-slate-100" :class="{ 'opacity-50 line-through': ['rechazado', 'anulado'].includes(p.comprobante.estado) }">
                                 <td class="p-3 w-16 text-slate-500">{{ hora(p.fecha) }}</td>
                                 <td class="p-3">
                                     <Link :href="`/comprobantes/${p.comprobante.id}`" class="font-medium text-emerald-700 hover:underline">{{ p.comprobante.numero }}</Link>
@@ -144,7 +144,7 @@ const imprimir = () => {
                                 <td class="p-3">
                                     <Tag v-if="p.tipo === 'cobranza'" value="Cobranza" severity="info" class="mr-1" />
                                     <Tag
-                                        v-if="['rechazado', 'error'].includes(p.comprobante.estado)"
+                                        v-if="['rechazado', 'anulado', 'error'].includes(p.comprobante.estado)"
                                         :value="estadoSunat(p.comprobante.estado).texto"
                                         :severity="estadoSunat(p.comprobante.estado).severidad"
                                     />

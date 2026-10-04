@@ -2,7 +2,9 @@
 
 namespace App\Models;
 
+use Carbon\CarbonInterface;
 use DateTimeInterface;
+use Illuminate\Database\Eloquent\Builder;
 use Illuminate\Database\Eloquent\Model;
 use Illuminate\Database\Eloquent\Relations\BelongsTo;
 use Illuminate\Database\Eloquent\Relations\HasMany;
@@ -19,6 +21,12 @@ class Comprobante extends Model
 
     /** Documento de uso interno: no es comprobante de pago y no se envía a SUNAT. */
     public const NOTA_VENTA = 'NV';
+
+    /** Estados en que el comprobante no tiene validez: no cuenta en ventas, deudas ni reportes. */
+    public const ESTADOS_SIN_VALIDEZ = ['rechazado', 'anulado'];
+
+    /** Plazo de SUNAT para comunicar la baja (días calendario desde la emisión). */
+    public const DIAS_PARA_BAJA = 7;
 
     // Catálogo 09 - motivos de nota de crédito más usados
     public const MOTIVOS_NC = [
@@ -37,6 +45,8 @@ class Comprobante extends Model
         'igv', 'total', 'saldo', 'comprobante_referencia_id', 'motivo_codigo', 'motivo_descripcion',
         'estado', 'sunat_codigo', 'sunat_descripcion', 'sunat_observaciones', 'hash', 'resumen', 'ticket',
         'xml_path', 'cdr_path', 'intentos_envio', 'enviado_at',
+        'baja_estado', 'baja_motivo', 'baja_documento', 'baja_ticket', 'baja_codigo', 'baja_descripcion',
+        'baja_cdr_path', 'baja_user_id', 'baja_at',
     ];
 
     // Valores por defecto al crear (la base de datos también los tiene, pero así el
@@ -54,6 +64,7 @@ class Comprobante extends Model
             'fecha_emision' => 'datetime',
             'fecha_vencimiento' => 'date',
             'enviado_at' => 'datetime',
+            'baja_at' => 'datetime',
             'sunat_observaciones' => 'array',
             'op_gravadas' => 'decimal:2',
             'op_exoneradas' => 'decimal:2',
@@ -80,7 +91,7 @@ class Comprobante extends Model
         return $this->hasMany(ComprobanteItem::class);
     }
 
-        /** Guías de remisión electrónicas emitidas desde este comprobante. */
+    /** Guías de remisión electrónicas emitidas desde este comprobante. */
     public function guias(): HasMany
     {
         return $this->hasMany(Guia::class)->orderBy('id');
@@ -131,6 +142,12 @@ class Comprobante extends Model
         return $this->hasMany(Comprobante::class, 'comprobante_referencia_id');
     }
 
+    /** Usuario que solicitó la comunicación de baja. */
+    public function bajaUsuario(): BelongsTo
+    {
+        return $this->belongsTo(User::class, 'baja_user_id');
+    }
+
     public function getNumeroAttribute(): string
     {
         return $this->serie.'-'.$this->correlativo;
@@ -161,6 +178,38 @@ class Comprobante extends Model
     public function nombreArchivo(string $ruc): string
     {
         return "{$ruc}-{$this->tipo_comprobante}-{$this->serie}-{$this->correlativo}";
+    }
+
+    /** ¿Tiene validez? (no fue rechazado por SUNAT ni dado de baja) */
+    public function tieneValidez(): bool
+    {
+        return ! in_array($this->estado, self::ESTADOS_SIN_VALIDEZ, true);
+    }
+
+    /** Solo comprobantes con validez: Comprobante::validos()->... */
+    public function scopeValidos(Builder $query): Builder
+    {
+        return $query->whereNotIn('estado', self::ESTADOS_SIN_VALIDEZ);
+    }
+
+    /** Fecha límite para dar de baja (7 días calendario desde la emisión). */
+    public function fechaLimiteBaja(): CarbonInterface
+    {
+        return $this->fecha_emision->copy()->startOfDay()->addDays(self::DIAS_PARA_BAJA);
+    }
+
+    /** Por qué no se puede dar de baja (null = sí se puede). */
+    public function impedimentoBaja(): ?string
+    {
+        return match (true) {
+            ! in_array($this->tipo_comprobante, ['01', '03'], true) => 'Solo se dan de baja facturas y boletas.',
+            in_array($this->baja_estado, ['enviada', 'aceptada'], true) => 'Este comprobante ya tiene una comunicación de baja.',
+            ! in_array($this->estado, ['aceptado', 'observado'], true) => 'Solo se da de baja un comprobante aceptado por SUNAT.',
+            today()->gt($this->fechaLimiteBaja()) => 'Pasaron más de '.self::DIAS_PARA_BAJA.' días desde la emisión: anúlalo con una nota de crédito.',
+            $this->notas()->validos()->exists() => 'Tiene notas de crédito o débito: ya no se puede dar de baja.',
+            $this->pagos()->where('tipo', ComprobantePago::TIPO_COBRANZA)->exists() => 'Ya tiene cobranzas registradas: anúlalo con una nota de crédito.',
+            default => null,
+        };
     }
 
     public function puedeReenviarse(): bool

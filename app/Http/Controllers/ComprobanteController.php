@@ -5,6 +5,7 @@ namespace App\Http\Controllers;
 use App\Models\Comprobante;
 use App\Models\Empresa;
 use App\Services\NotaCreditoService;
+use App\Services\Sunat\BajaService;
 use App\Services\Sunat\SunatService;
 use App\Support\NumeroALetras;
 use Illuminate\Http\RedirectResponse;
@@ -49,13 +50,19 @@ class ComprobanteController extends Controller
 
     public function show(Request $request, Comprobante $comprobante, NotaCreditoService $notasCredito): Response
     {
-        $comprobante->load(['items', 'cliente', 'cuotas', 'pagos', 'vendedor:id,name', 'usuario:id,name', 'referencia', 'notas', 'guias:id,comprobante_id,serie,correlativo,estado']);
+        $comprobante->load(['items', 'cliente', 'cuotas', 'pagos', 'vendedor:id,name', 'usuario:id,name', 'referencia', 'notas', 'guias:id,comprobante_id,serie,correlativo,estado', 'bajaUsuario:id,name']);
+        $esAdmin = $request->user()->tieneRol('admin');
 
         return Inertia::render('Comprobantes/Show', [
             'comprobante' => $comprobante,
             'puedeReenviarse' => $comprobante->puedeReenviarse(),
             // Botón "Nota de crédito": solo administrador y si aún queda algo por acreditar
-            'puedeNotaCredito' => $request->user()->tieneRol('admin') && ! $notasCredito->impedimento($comprobante),
+            'puedeNotaCredito' => $esAdmin && ! $notasCredito->impedimento($comprobante),
+            // Botón "Dar de baja": solo administrador, dentro del plazo y sin notas ni cobranzas
+            'puedeBaja' => $esAdmin && ! $comprobante->impedimentoBaja(),
+            'limiteBaja' => in_array($comprobante->tipo_comprobante, ['01', '03'], true)
+                ? $comprobante->fechaLimiteBaja()->toDateString()
+                : null,
         ]);
     }
 
@@ -136,6 +143,49 @@ class ComprobanteController extends Controller
         abort_unless($comprobante->cdr_path && Storage::disk('local')->exists($comprobante->cdr_path), 404, 'Aún no hay CDR de SUNAT.');
 
         return Storage::disk('local')->download($comprobante->cdr_path);
+    }
+
+    /** Comunicación de baja: anula ante SUNAT una factura o boleta aceptada (solo administrador). */
+    public function baja(Request $request, Comprobante $comprobante, BajaService $bajas): RedirectResponse
+    {
+        abort_if((int) $comprobante->sucursal_id !== (int) $request->user()->sucursal_id, 404);
+
+        $datos = $request->validate([
+            'motivo' => ['required', 'string', 'min:3', 'max:100'],
+        ], [
+            'motivo.required' => 'Indica el motivo de la baja.',
+            'motivo.max' => 'El motivo admite como máximo 100 caracteres.',
+        ]);
+
+        $mensaje = $bajas->solicitar($comprobante, trim($datos['motivo']), $request->user());
+
+        return in_array($comprobante->refresh()->baja_estado, ['aceptada', 'enviada'], true)
+            ? back()->with('success', $mensaje)
+            : back()->with('error', $mensaje);
+    }
+
+    /** Consulta el ticket de una baja que SUNAT aún procesaba. */
+    public function consultarBaja(Comprobante $comprobante, BajaService $bajas): RedirectResponse
+    {
+        if ($comprobante->baja_estado !== 'enviada') {
+            return back()->with('error', 'Este comprobante no tiene una baja pendiente de respuesta.');
+        }
+
+        $bajas->consultar($comprobante);
+        $comprobante->refresh();
+
+        return match ($comprobante->baja_estado) {
+            'aceptada' => back()->with('success', "SUNAT aceptó la baja de {$comprobante->numero}. El comprobante quedó anulado."),
+            'enviada' => back()->with('success', 'SUNAT aún está procesando la baja. Vuelve a consultar en unos segundos.'),
+            default => back()->with('error', "SUNAT: {$comprobante->baja_descripcion}"),
+        };
+    }
+
+    public function cdrBaja(Comprobante $comprobante): StreamedResponse
+    {
+        abort_unless($comprobante->baja_cdr_path && Storage::disk('local')->exists($comprobante->baja_cdr_path), 404, 'Aún no hay CDR de la baja.');
+
+        return Storage::disk('local')->download($comprobante->baja_cdr_path);
     }
 
     private function respuesta(Comprobante $c): RedirectResponse

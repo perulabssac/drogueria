@@ -47,7 +47,7 @@ class ReporteContableService
             ->orderBy('correlativo')
             ->get()
             ->map(function (Comprobante $c) {
-                $valido = $c->estado !== 'rechazado';
+                $valido = $c->tieneValidez();
                 $factor = ! $valido ? 0 : ($c->tipo_comprobante === '07' ? -1 : 1);
 
                 return [

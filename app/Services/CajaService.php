@@ -75,7 +75,7 @@ class CajaService
     {
         $validos = fn () => ComprobantePago::query()
             ->where('caja_id', $caja->id)
-            ->whereHas('comprobante', fn ($q) => $q->where('estado', '!=', 'rechazado'));
+            ->whereHas('comprobante', fn ($q) => $q->validos());
 
         // Ventas al contado y cobranzas de ventas al crédito, por medio de pago
         $pagos = $validos()

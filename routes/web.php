@@ -62,6 +62,7 @@ Route::middleware('auth')->group(function () {
         // Acciones con SUNAT (el contador no las tiene)
         Route::post('/comprobantes/{comprobante}/reenviar', [ComprobanteController::class, 'reenviar']);
         Route::post('/comprobantes/{comprobante}/consultar', [ComprobanteController::class, 'consultar']);
+        Route::post('/comprobantes/{comprobante}/baja/consultar', [ComprobanteController::class, 'consultarBaja']);
 
         // Caja del usuario (turno)
         Route::get('/caja', [CajaController::class, 'actual'])->name('caja.actual');
@@ -152,6 +153,7 @@ Route::middleware('auth')->group(function () {
         Route::get('/comprobantes/{comprobante}/imprimir', [ComprobanteController::class, 'imprimir']);
         Route::get('/comprobantes/{comprobante}/xml', [ComprobanteController::class, 'xml']);
         Route::get('/comprobantes/{comprobante}/cdr', [ComprobanteController::class, 'cdr']);
+        Route::get('/comprobantes/{comprobante}/baja/cdr', [ComprobanteController::class, 'cdrBaja']);
     });
 
     // Consulta de compras (solo lectura): almacén y contador.
@@ -190,7 +192,7 @@ Route::middleware('auth')->group(function () {
         Route::get('/reportes/xml.zip', [ReporteContableController::class, 'xml'])->name('reportes.xml');
     });
 
-    // Solo administrador: historial de cajas, usuarios y notas de crédito
+    // Solo administrador: historial de cajas, usuarios, notas de crédito y bajas
     Route::middleware('rol:admin')->group(function () {
         Route::get('/cajas', [CajaController::class, 'index'])->name('cajas.index');
 
@@ -205,6 +207,9 @@ Route::middleware('auth')->group(function () {
         // Notas de crédito (anulan o devuelven ventas)
         Route::get('/comprobantes/{comprobante}/nota-credito', [NotaCreditoController::class, 'create'])->name('notas-credito.create');
         Route::post('/comprobantes/{comprobante}/nota-credito', [NotaCreditoController::class, 'store'])->name('notas-credito.store');
+
+        // Comunicación de baja (anula ante SUNAT dentro de los 7 días)
+        Route::post('/comprobantes/{comprobante}/baja', [ComprobanteController::class, 'baja'])->name('comprobantes.baja');
 
         // Aprobar la toma de inventario (ajusta el stock según el conteo)
         Route::post('/tomas/{toma}/aprobar', [TomaInventarioController::class, 'aprobar'])->name('tomas.aprobar');

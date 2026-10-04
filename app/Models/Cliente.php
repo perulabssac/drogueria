@@ -91,7 +91,7 @@ class Cliente extends Model
     {
         return round((float) $this->comprobantes()
             ->where('forma_pago', 'credito')
-            ->where('estado', '!=', 'rechazado')
+            ->validos()
             ->sum('saldo'), 2);
     }
 
@@ -100,7 +100,7 @@ class Cliente extends Model
     {
         return $this->comprobantes()
             ->where('forma_pago', 'credito')
-            ->where('estado', '!=', 'rechazado')
+            ->validos()
             ->where('saldo', '>', 0)
             ->get(['id', 'total', 'saldo'])
             ->contains(function (Comprobante $c) {

@@ -20,6 +20,8 @@ use Greenter\Model\Sale\Note;
 use Greenter\Model\Sale\SaleDetail;
 use Greenter\Model\Summary\Summary;
 use Greenter\Model\Summary\SummaryDetail;
+use Greenter\Model\Voided\Voided;
+use Greenter\Model\Voided\VoidedDetail;
 
 /**
  * Traduce los comprobantes del sistema a los objetos de Greenter (que luego se convierten en XML).
@@ -100,6 +102,21 @@ class DocumentoBuilder
             ->setCorrelativo($correlativoResumen)
             ->setCompany($this->empresa($empresa, '0000'))
             ->setDetails([$detalle]);
+    }
+
+    /** Comunicación de baja de una factura (RA-AAAAMMDD-n). */
+    public function baja(Comprobante $c, Empresa $empresa, string $correlativo, string $motivo): Voided
+    {
+        return (new Voided())
+            ->setCorrelativo($correlativo)
+            ->setFecGeneracion(new DateTime($c->fecha_emision->format('Y-m-d')))
+            ->setFecComunicacion(new DateTime())
+            ->setCompany($this->empresa($empresa, '0000'))
+            ->setDetails([(new VoidedDetail())
+                ->setTipoDoc($c->tipo_comprobante)
+                ->setSerie($c->serie)
+                ->setCorrelativo((string) $c->correlativo)
+                ->setDesMotivoBaja(mb_substr($motivo, 0, 100))]);
     }
 
     private function factura(Comprobante $c): Invoice

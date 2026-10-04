@@ -7,7 +7,7 @@ export const ESTADOS_SUNAT = {
     observado: { texto: 'Aceptado con obs.', severidad: 'warn', icono: 'pi pi-exclamation-circle' },
     rechazado: { texto: 'Rechazado', severidad: 'danger', icono: 'pi pi-times-circle' },
     error: { texto: 'Sin enviar', severidad: 'danger', icono: 'pi pi-wifi' },
-    anulado: { texto: 'Anulado', severidad: 'secondary', icono: 'pi pi-ban' },
+    anulado: { texto: 'Anulado (baja)', severidad: 'secondary', icono: 'pi pi-ban' },
     interno: { texto: 'Interno', severidad: 'contrast', icono: 'pi pi-file' },
 };
 

@@ -115,7 +115,7 @@ class DashboardService
     public function ingresosPorMedio(): array
     {
         return ComprobantePago::query()
-            ->whereHas('comprobante', fn ($q) => $q->where('sucursal_id', $this->sucursalId)->where('estado', '!=', 'rechazado'))
+            ->whereHas('comprobante', fn ($q) => $q->where('sucursal_id', $this->sucursalId)->validos())
             ->whereBetween('fecha', [today()->startOfMonth(), today()->endOfDay()])
             ->selectRaw('medio, SUM(monto) as total')
             ->groupBy('medio')
@@ -132,7 +132,7 @@ class DashboardService
             ->join('productos as p', 'p.id', '=', 'i.producto_id')
             ->where('c.sucursal_id', $this->sucursalId)
             ->whereIn('c.tipo_comprobante', self::TIPOS_VENTA)
-            ->where('c.estado', '!=', 'rechazado')
+            ->whereNotIn('c.estado',Comprobante::ESTADOS_SIN_VALIDEZ)
             ->where('i.bonificacion', false)
             ->whereBetween('c.fecha_emision', [today()->startOfMonth(), today()->endOfDay()])
             ->groupBy('p.id', 'p.nombre', 'p.concentracion', 'p.unidad_venta', 'p.unidades_por_presentacion')
@@ -157,7 +157,7 @@ class DashboardService
             ->join('clientes as cl', 'cl.id', '=', 'c.cliente_id')
             ->where('c.sucursal_id', $this->sucursalId)
             ->whereIn('c.tipo_comprobante', self::TIPOS_VENTA)
-            ->where('c.estado', '!=', 'rechazado')
+            ->whereNotIn('c.estado',Comprobante::ESTADOS_SIN_VALIDEZ)
             ->where('cl.numero_documento', '!=', '00000000') // sin "Clientes varios"
             ->whereBetween('c.fecha_emision', [today()->startOfMonth(), today()->endOfDay()])
             ->groupBy('cl.id', 'cl.razon_social', 'cl.numero_documento')
@@ -293,6 +293,6 @@ class DashboardService
     {
         return Comprobante::query()
             ->where('sucursal_id', $this->sucursalId)
-            ->when($soloValidos, fn ($q) => $q->where('estado', '!=', 'rechazado'));
+            ->when($soloValidos, fn ($q) => $q->validos());
     }
 }

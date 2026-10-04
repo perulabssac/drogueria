@@ -58,7 +58,7 @@ const url = (ruta) => `${ruta}?periodo=${props.periodo}`;
             Hay <b>{{ r.pendientes_sunat }}</b> comprobante(s) del mes que aún no tienen respuesta de SUNAT. Verifícalos antes de declarar.
         </Message>
         <Message v-if="r.rechazados" severity="error" class="mb-4">
-            <b>{{ r.rechazados }}</b> comprobante(s) rechazado(s) por SUNAT: figuran en el registro con montos en cero.
+            <b>{{ r.rechazados }}</b> comprobante(s) sin validez (rechazados por SUNAT o dados de baja): figuran en el registro con montos en cero.
         </Message>
 
         <!-- Resumen del mes -->

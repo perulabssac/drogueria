@@ -44,7 +44,7 @@ class NotaCreditoService
 
         $devuelto = ComprobanteItem::query()
             ->whereIn('item_referencia_id', $comprobante->items->pluck('id'))
-            ->whereHas('comprobante', fn ($q) => $q->where('tipo_comprobante', '07')->where('estado', '!=', 'rechazado'))
+            ->whereHas('comprobante', fn ($q) => $q->where('tipo_comprobante', '07')->validos())
             ->selectRaw('item_referencia_id, SUM(cantidad) as total')
             ->groupBy('item_referencia_id')
             ->pluck('total', 'item_referencia_id');
@@ -62,6 +62,9 @@ class NotaCreditoService
         }
         if (! in_array($comprobante->estado, ['aceptado', 'observado'], true)) {
             return 'El comprobante debe estar aceptado por SUNAT para emitirle una nota de crédito.';
+        }
+                if (in_array($comprobante->baja_estado, ['enviada', 'aceptada'], true)) {
+            return 'Este comprobante tiene una comunicación de baja: ya no admite notas de crédito.';
         }
         if ($this->pendientes($comprobante)->sum() <= 0) {
             return 'Este comprobante ya fue acreditado por completo.';

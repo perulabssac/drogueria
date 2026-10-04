@@ -27,14 +27,14 @@ class ClienteController extends Controller
         $clientes = Cliente::query()
             ->where('numero_documento', '!=', '00000000')
             // Deuda actual (ventas al crédito con saldo)
-            ->withSum(['comprobantes as deuda' => fn ($q) => $q->where('forma_pago', 'credito')->where('estado', '!=', 'rechazado')], 'saldo')
+            ->withSum(['comprobantes as deuda' => fn ($q) => $q->where('forma_pago', 'credito')->validos()], 'saldo')
             ->when($buscar, fn ($q) => $q->where(fn ($w) => $w
                 ->where('razon_social', 'like', "%{$buscar}%")
                 ->orWhere('nombre_comercial', 'like', "%{$buscar}%")
                 ->orWhere('numero_documento', 'like', "{$buscar}%")))
             ->when($request->filled('tipo'), fn ($q) => $q->where('tipo_documento', $request->string('tipo')->toString()))
             ->when($request->input('filtro') === 'con_deuda', fn ($q) => $q->whereHas('comprobantes', fn ($c) => $c
-                ->where('forma_pago', 'credito')->where('estado', '!=', 'rechazado')->where('saldo', '>', 0)))
+                ->where('forma_pago', 'credito')->validos()->where('saldo', '>', 0)))
             ->when($request->input('filtro') === 'sunat', fn ($q) => $q->where('tipo_documento', Cliente::RUC)
                 ->where(fn ($w) => $w->where('estado_sunat', '!=', 'ACTIVO')->orWhere('condicion_sunat', '!=', 'HABIDO')))
             ->when($request->input('filtro') === 'inactivos', fn ($q) => $q->where('activo', false))

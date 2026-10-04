@@ -34,8 +34,8 @@ class GuiaService
                 $comprobante = Comprobante::query()
                     ->where('sucursal_id', $usuario->sucursal_id)
                     ->findOrFail($datos['comprobante_id']);
-                if ($comprobante->estado === 'rechazado') {
-                    throw ValidationException::withMessages(['comprobante_id' => 'Ese comprobante fue rechazado por SUNAT: no puede sustentar un traslado.']);
+                if (! $comprobante->tieneValidez()) {
+                    throw ValidationException::withMessages(['comprobante_id' => 'Ese comprobante no tiene validez (rechazado o dado de baja): no puede sustentar un traslado.']);
                 }
             }
 
