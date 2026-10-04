@@ -7,6 +7,7 @@ use App\Models\Comprobante;
 use App\Models\MovimientoInventario;
 use App\Models\Producto;
 use App\Models\Ajuste;
+use App\Models\Importacion;
 use Carbon\CarbonImmutable;
 use Illuminate\Database\Eloquent\Builder;
 use Illuminate\Database\Eloquent\Relations\MorphTo;
@@ -117,6 +118,11 @@ class KardexService
                 'documento' => 'Ajuste '.$ref->numero,
                 'tercero' => $ref->motivo_nombre,
                 'url' => "/ajustes/{$ref->id}",
+            ],
+                $ref instanceof Importacion => [
+                'documento' => 'Importación '.$ref->numero,
+                'tercero' => $ref->archivo,
+                'url' => '/importar',
             ],
             default => ['documento' => null, 'tercero' => null, 'url' => null],
         };

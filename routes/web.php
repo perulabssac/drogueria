@@ -13,6 +13,7 @@ use App\Http\Controllers\CotizacionController;
 use App\Http\Controllers\CuentaPagarController;
 use App\Http\Controllers\DashboardController;
 use App\Http\Controllers\GuiaController;
+use App\Http\Controllers\ImportacionController;
 use App\Http\Controllers\KardexController;
 use App\Http\Controllers\NotaCreditoController;
 use App\Http\Controllers\PerfilController;
@@ -70,7 +71,7 @@ Route::middleware('auth')->group(function () {
         Route::post('/comprobantes/{comprobante}/reenviar', [ComprobanteController::class, 'reenviar']);
         Route::post('/comprobantes/{comprobante}/consultar', [ComprobanteController::class, 'consultar']);
         Route::post('/comprobantes/{comprobante}/baja/consultar', [ComprobanteController::class, 'consultarBaja']);
-        
+
         // Enviar el comprobante al cliente
         Route::post('/comprobantes/{comprobante}/correo', [ComprobanteController::class, 'correo'])->middleware('throttle:20,1');
         Route::post('/comprobantes/{comprobante}/whatsapp', [ComprobanteController::class, 'whatsapp']);
@@ -123,6 +124,13 @@ Route::middleware('auth')->group(function () {
         Route::put('/tomas/{toma}/conteo', [TomaInventarioController::class, 'conteo'])->name('tomas.conteo');
         Route::post('/tomas/{toma}/lotes', [TomaInventarioController::class, 'agregarLote'])->name('tomas.lotes');
         Route::post('/tomas/{toma}/anular', [TomaInventarioController::class, 'anular'])->name('tomas.anular');
+
+        // Importar productos y stock desde Excel
+        Route::get('/importar', [ImportacionController::class, 'index'])->name('importar.index');
+        Route::get('/importar/plantilla', [ImportacionController::class, 'plantilla'])->name('importar.plantilla');
+        Route::post('/importar', [ImportacionController::class, 'subir'])->name('importar.subir');
+        Route::post('/importar/confirmar', [ImportacionController::class, 'confirmar'])->name('importar.confirmar');
+        Route::post('/importar/cancelar', [ImportacionController::class, 'cancelar'])->name('importar.cancelar');
     });
 
     // Guías de remisión: las emiten ventas y almacén (despacho)

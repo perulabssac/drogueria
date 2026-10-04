@@ -39,6 +39,7 @@ const areas = [
         titulo: 'Inventario',
         opciones: [
             { texto: 'Productos', icono: 'pi pi-box', url: '/productos', roles: ['almacen'] },
+            { texto: 'Importar productos', icono: 'pi pi-file-import', url: '/importar', roles: ['almacen'] },
             { texto: 'Stock', icono: 'pi pi-th-large', url: '/inventario', roles: ['almacen', 'contador'] },
             { texto: 'Kárdex', icono: 'pi pi-list', url: '/kardex', roles: ['almacen', 'contador'] },
             { texto: 'Vencimientos', icono: 'pi pi-calendar-times', url: '/vencimientos', roles: ['almacen', 'contador'] },
