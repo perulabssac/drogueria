@@ -1,5 +1,5 @@
 <script setup>
-import { computed } from 'vue';
+import { computed, ref, watch } from 'vue';
 import { Head, Link, useForm } from '@inertiajs/vue3';
 import AppLayout from '@/Layouts/AppLayout.vue';
 import Button from 'primevue/button';
@@ -8,7 +8,8 @@ import InputNumber from 'primevue/inputnumber';
 import Select from 'primevue/select';
 import ToggleSwitch from 'primevue/toggleswitch';
 import Message from 'primevue/message';
-import { precio } from '@/utils/formato';
+import { precio, soles } from '@/utils/formato';
+import { precioSugerido, analizarPrecio } from '@/utils/precios';
 
 const props = defineProps({
     producto: Object, // null al crear
@@ -19,6 +20,8 @@ const props = defineProps({
     condiciones: Object,
     unidadesVenta: Object,
     unidadesFraccion: Object,
+    margenes: Array, // 10, 15, 20 ... 100
+    redondeo: Number, // redondeo del precio calculado (ej. 0.10)
 });
 
 const editando = computed(() => !!props.producto);
@@ -55,6 +58,7 @@ const vacio = {
     unidad_fraccion: 'TAB',
     precio_fraccion: null,
     costo: null,
+    margen: null,
     stock_minimo: 0,
     activo: true,
 };
@@ -71,6 +75,7 @@ const form = useForm(
               precio_venta: numeroONulo(p.precio_venta),
               precio_fraccion: numeroONulo(p.precio_fraccion),
               costo: numeroONulo(p.costo),
+              margen: numeroONulo(p.margen),
               unidades_por_presentacion: p.fraccionable ? p.unidades_por_presentacion : null,
               unidad_fraccion: p.unidad_fraccion ?? 'TAB',
               laboratorio_nuevo: '',
@@ -82,11 +87,50 @@ const guardar = () => {
     editando.value ? form.put(`/productos/${p.id}`) : form.post('/productos');
 };
 
-// Precio sugerido por unidad suelta (precio de la presentación / unidades)
-const precioFraccionSugerido = computed(() => {
-    if (!form.precio_venta || !form.unidades_por_presentacion) return null;
-    return form.precio_venta / form.unidades_por_presentacion;
+// ---------- Margen de ganancia (sobre el costo) ----------
+// Lista del 10 % al 100 % y "Otro…" para escribir un margen exacto
+const opcionesMargen = [
+    ...props.margenes.map((m) => ({ value: m, label: `${m} %` })),
+    { value: 'otro', label: 'Otro…' },
+];
+const margenSeleccion = ref(form.margen === null ? null : props.margenes.includes(form.margen) ? form.margen : 'otro');
+watch(margenSeleccion, (valor) => {
+    if (valor !== 'otro') form.margen = valor;
 });
+
+const gravado = computed(() => form.tipo_afectacion_igv === '10');
+const factor = computed(() => (form.fraccionable && form.unidades_por_presentacion > 1 ? form.unidades_por_presentacion : null));
+const costoFraccion = computed(() => (factor.value && form.costo ? form.costo / factor.value : null));
+
+// Precios calculados con el costo y el margen
+const precioCalculado = computed(() => precioSugerido(form.costo, form.margen, gravado.value, props.redondeo));
+// La unidad suelta se redondea al céntimo (con 0.05 o 0.10 el margen se dispararía en productos baratos)
+const fraccionCalculada = computed(() => precioSugerido(costoFraccion.value, form.margen, gravado.value, 0.01));
+
+// Al cambiar el costo, el margen, el IGV o el fraccionamiento, el precio se recalcula solo.
+// Después se puede corregir a mano: se respeta hasta el siguiente cambio de costo o margen.
+watch(
+    () => [form.costo, form.margen, form.tipo_afectacion_igv, form.fraccionable, form.unidades_por_presentacion],
+    () => {
+        if (precioCalculado.value) form.precio_venta = precioCalculado.value;
+        if (fraccionCalculada.value) form.precio_fraccion = fraccionCalculada.value;
+    },
+);
+
+const aplicarCalculado = () => {
+    form.precio_venta = precioCalculado.value;
+    if (fraccionCalculada.value) form.precio_fraccion = fraccionCalculada.value;
+};
+const precioEditado = computed(() => precioCalculado.value && form.precio_venta && Math.abs(form.precio_venta - precioCalculado.value) > 0.001);
+
+// Utilidad real con el precio que quedó (calculado o escrito a mano)
+const utilidad = computed(() => analizarPrecio(form.precio_venta, form.costo, gravado.value));
+const utilidadFraccion = computed(() => (factor.value ? analizarPrecio(form.precio_fraccion, costoFraccion.value, gravado.value) : null));
+
+// Verde: buen margen · ámbar: bajo · rojo: pérdida
+const colorMargen = (m) =>
+    m === null || m === undefined ? 'text-slate-500' : m < 0 ? 'text-red-600' : m < 10 ? 'text-amber-600' : 'text-emerald-700';
+const pct = (v) => (v === null || v === undefined ? '—' : `${v.toFixed(1)} %`);
 
 const titulo = computed(() => (editando.value ? `Editar: ${p.nombre} ${p.concentracion ?? ''}` : 'Nuevo producto'));
 </script>
@@ -158,15 +202,88 @@ const titulo = computed(() => (editando.value ? `Editar: ${p.nombre} ${p.concent
                     </div>
                 </section>
 
-                <!-- INVENTARIO -->
+                <!-- COSTO, MARGEN Y UTILIDAD -->
                 <section class="bg-white rounded-xl border border-slate-200 p-5">
-                    <h2 class="font-semibold mb-4">Inventario</h2>
+                    <h2 class="font-semibold mb-4">Costo y margen de ganancia</h2>
                     <div class="grid grid-cols-1 md:grid-cols-6 gap-4">
                         <div class="md:col-span-2 flex flex-col gap-1">
                             <label class="text-sm">Costo por {{ form.unidad_venta }} (sin IGV)</label>
                             <InputNumber v-model="form.costo" prefix="S/ " :minFractionDigits="2" :maxFractionDigits="4" fluid />
                             <small class="text-slate-500">Se actualiza solo con cada compra.</small>
                         </div>
+                        <div class="md:col-span-2 flex flex-col gap-1">
+                            <label class="text-sm">Margen de ganancia (sobre el costo)</label>
+                            <Select v-model="margenSeleccion" :options="opcionesMargen" optionLabel="label" optionValue="value" placeholder="Elegir margen" showClear fluid />
+                            <small v-if="form.errors.margen" class="text-red-600">{{ form.errors.margen }}</small>
+                            <small v-else-if="form.margen === null" class="text-amber-600">Sin margen: el precio no se calcula solo.</small>
+                        </div>
+                        <div class="md:col-span-2 flex flex-col gap-1">
+                            <template v-if="margenSeleccion === 'otro'">
+                                <label class="text-sm">Margen exacto</label>
+                                <InputNumber v-model="form.margen" suffix=" %" :min="0" :max="1000" :minFractionDigits="0" :maxFractionDigits="2" fluid />
+                            </template>
+                            <template v-else-if="precioCalculado">
+                                <label class="text-sm">Precio calculado (con IGV)</label>
+                                <p class="text-lg font-semibold text-emerald-700 py-1.5">{{ precio(precioCalculado) }}</p>
+                            </template>
+                        </div>
+                    </div>
+
+                    <!-- Utilidad con el precio actual -->
+                    <div v-if="utilidad" class="mt-4 rounded-lg border border-slate-200 bg-slate-50 p-4 text-sm">
+                        <div class="flex flex-wrap items-center justify-between gap-2 mb-3">
+                            <p class="font-medium">Utilidad con el precio de venta</p>
+                            <Button
+                                v-if="precioEditado"
+                                type="button"
+                                size="small"
+                                severity="secondary"
+                                outlined
+                                icon="pi pi-refresh"
+                                :label="`Usar precio calculado (${precio(precioCalculado)})`"
+                                @click="aplicarCalculado"
+                            />
+                        </div>
+                        <table class="w-full">
+                            <thead class="text-xs text-slate-500">
+                                <tr>
+                                    <th class="text-left font-normal pb-1"></th>
+                                    <th class="text-right font-normal pb-1">Costo c/IGV</th>
+                                    <th class="text-right font-normal pb-1">Precio s/IGV</th>
+                                    <th class="text-right font-normal pb-1">Ganancia</th>
+                                    <th class="text-right font-normal pb-1">Margen s/costo</th>
+                                    <th class="text-right font-normal pb-1">Margen s/venta</th>
+                                </tr>
+                            </thead>
+                            <tbody>
+                                <tr class="border-t border-slate-200">
+                                    <td class="py-1.5">Por {{ form.unidad_venta }}</td>
+                                    <td class="text-right">{{ soles(utilidad.costoConIgv) }}</td>
+                                    <td class="text-right">{{ soles(utilidad.precioSinIgv) }}</td>
+                                    <td class="text-right font-semibold" :class="colorMargen(utilidad.margenCosto)">{{ soles(utilidad.ganancia) }}</td>
+                                    <td class="text-right font-semibold" :class="colorMargen(utilidad.margenCosto)">{{ pct(utilidad.margenCosto) }}</td>
+                                    <td class="text-right" :class="colorMargen(utilidad.margenVenta)">{{ pct(utilidad.margenVenta) }}</td>
+                                </tr>
+                                <tr v-if="utilidadFraccion" class="border-t border-slate-200">
+                                    <td class="py-1.5">Por {{ form.unidad_fraccion }}</td>
+                                    <td class="text-right">{{ precio(utilidadFraccion.costoConIgv) }}</td>
+                                    <td class="text-right">{{ precio(utilidadFraccion.precioSinIgv) }}</td>
+                                    <td class="text-right font-semibold" :class="colorMargen(utilidadFraccion.margenCosto)">{{ precio(utilidadFraccion.ganancia) }}</td>
+                                    <td class="text-right font-semibold" :class="colorMargen(utilidadFraccion.margenCosto)">{{ pct(utilidadFraccion.margenCosto) }}</td>
+                                    <td class="text-right" :class="colorMargen(utilidadFraccion.margenVenta)">{{ pct(utilidadFraccion.margenVenta) }}</td>
+                                </tr>
+                            </tbody>
+                        </table>
+                        <p v-if="utilidad.ganancia < 0" class="text-red-600 font-medium mt-2"><i class="pi pi-exclamation-triangle mr-1"></i>Con este precio se vende a pérdida.</p>
+                        <p v-else-if="precioEditado" class="text-slate-500 mt-2">El precio fue cambiado a mano: el margen real es {{ pct(utilidad.margenCosto) }} sobre el costo.</p>
+                    </div>
+                    <p v-else class="mt-3 text-sm text-slate-500">Ingresa el costo y el precio de venta para ver la ganancia.</p>
+                </section>
+
+                <!-- INVENTARIO -->
+                <section class="bg-white rounded-xl border border-slate-200 p-5">
+                    <h2 class="font-semibold mb-4">Inventario</h2>
+                    <div class="grid grid-cols-1 md:grid-cols-6 gap-4">
                         <div class="md:col-span-2 flex flex-col gap-1">
                             <label class="text-sm">Stock mínimo ({{ form.unidad_venta }})</label>
                             <InputNumber v-model="form.stock_minimo" :min="0" fluid />
@@ -234,7 +351,7 @@ const titulo = computed(() => (editando.value ? `Editar: ${p.nombre} ${p.concent
                             <label class="text-sm">Precio por {{ form.unidad_fraccion }} (con IGV) *</label>
                             <InputNumber v-model="form.precio_fraccion" prefix="S/ " :minFractionDigits="3" :maxFractionDigits="3" :invalid="!!form.errors.precio_fraccion" fluid />
                             <small v-if="form.errors.precio_fraccion" class="text-red-600">{{ form.errors.precio_fraccion }}</small>
-                            <small v-else-if="precioFraccionSugerido" class="text-slate-500">Sin recargo sería {{ precio(precioFraccionSugerido) }}</small>
+                            <small v-else-if="fraccionCalculada" class="text-slate-500">Calculado con el margen: {{ precio(fraccionCalculada) }}</small>
                         </div>
                     </div>
                 </section>

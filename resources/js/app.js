@@ -9,6 +9,13 @@ import { definePreset } from '@primeuix/themes';
 import ToastService from 'primevue/toastservice';
 import ConfirmationService from 'primevue/confirmationservice';
 import Tooltip from 'primevue/tooltip';
+import InputNumber from 'primevue/inputnumber';
+
+// Todos los campos numéricos usan el formato peruano: punto decimal (S/ 50.80) y coma de miles (1,250.50),
+// sin importar el idioma del navegador. Un campo puede cambiarlo con su propio locale="...".
+if (InputNumber.extends?.props?.locale) {
+    InputNumber.extends.props.locale.default = 'en-US';
+}
 
 // Tema Aura con color principal verde (rubro farmacéutico)
 const Tema = definePreset(Aura, {

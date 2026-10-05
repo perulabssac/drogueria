@@ -4,6 +4,8 @@ namespace App\Http\Controllers;
 
 use App\Models\Laboratorio;
 use App\Models\Producto;
+use App\Models\Empresa;
+use App\Support\Precios;
 use App\Support\ProductoVenta;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\RedirectResponse;
@@ -114,6 +116,8 @@ class ProductoController extends Controller
             'condiciones' => Producto::CONDICIONES_VENTA,
             'unidadesVenta' => collect(Producto::UNIDADES_VENTA)->map(fn ($u) => $u['nombre']),
             'unidadesFraccion' => Producto::UNIDADES_FRACCION,
+            'margenes' => Precios::opcionesMargen(),
+            'redondeo' => (float) Empresa::actual()->redondeo_precio,
         ];
     }
 
@@ -149,6 +153,7 @@ class ProductoController extends Controller
             'unidad_fraccion' => [$fraccionable ? 'required' : 'nullable', Rule::in(array_keys(Producto::UNIDADES_FRACCION))],
             'precio_fraccion' => [$fraccionable ? 'required' : 'nullable', 'numeric', 'gt:0'],
             'costo' => ['nullable', 'numeric', 'min:0'],
+            'margen' => ['nullable', 'numeric', 'min:0', 'max:1000'],
             'stock_minimo' => ['nullable', 'integer', 'min:0'],
             'activo' => ['boolean'],
         ], [], [
