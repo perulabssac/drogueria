@@ -110,6 +110,7 @@ Route::middleware('auth')->group(function () {
         Route::get('/compras/nueva', [CompraController::class, 'create'])->name('compras.create');
         Route::post('/compras', [CompraController::class, 'store'])->name('compras.store');
         Route::post('/compras/{compra}/anular', [CompraController::class, 'anular'])->name('compras.anular');
+        Route::post('/compras/{compra}/precios', [CompraController::class, 'actualizarPrecios'])->name('compras.precios');
 
         // Registrar ajustes de inventario (el contador solo los ve)
         Route::get('/ajustes/nuevo', [AjusteController::class, 'create'])->name('ajustes.create');

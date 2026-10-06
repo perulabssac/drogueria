@@ -40,7 +40,7 @@ class Producto extends Model
         'condicion_venta', 'controlado', 'cadena_frio', 'tipo_afectacion_igv',
         'unidad_venta', 'unidad_sunat', 'precio_venta',
         'fraccionable', 'unidades_por_presentacion', 'unidad_fraccion', 'precio_fraccion',
-        'costo', 'stock_minimo', 'activo',
+        'costo', 'margen', 'stock_minimo', 'activo',
     ];
 
     protected function casts(): array

@@ -1,5 +1,5 @@
 <script setup>
-import { computed, ref, watch } from 'vue';
+import { computed, nextTick, ref, watch } from 'vue';
 import { Head, Link, useForm } from '@inertiajs/vue3';
 import AppLayout from '@/Layouts/AppLayout.vue';
 import Button from 'primevue/button';
@@ -109,9 +109,11 @@ const fraccionCalculada = computed(() => precioSugerido(costoFraccion.value, for
 
 // Al cambiar el costo, el margen, el IGV o el fraccionamiento, el precio se recalcula solo.
 // Después se puede corregir a mano: se respeta hasta el siguiente cambio de costo o margen.
+let conservarPrecio = false; // true al guardar el margen real de un precio puesto a mano
 watch(
     () => [form.costo, form.margen, form.tipo_afectacion_igv, form.fraccionable, form.unidades_por_presentacion],
     () => {
+        if (conservarPrecio) return;
         if (precioCalculado.value) form.precio_venta = precioCalculado.value;
         if (fraccionCalculada.value) form.precio_fraccion = fraccionCalculada.value;
     },
@@ -122,6 +124,29 @@ const aplicarCalculado = () => {
     if (fraccionCalculada.value) form.precio_fraccion = fraccionCalculada.value;
 };
 const precioEditado = computed(() => precioCalculado.value && form.precio_venta && Math.abs(form.precio_venta - precioCalculado.value) > 0.001);
+
+// Margen real del precio escrito a mano (se trunca a 2 decimales para que, al recalcular, salga el mismo precio)
+const margenReal = computed(() => {
+    if (!form.costo || !form.precio_venta) return null;
+    const sinIgv = gravado.value ? form.precio_venta / 1.18 : form.precio_venta;
+    return Math.floor(Number(((sinIgv / form.costo - 1) * 10000).toFixed(6))) / 100;
+});
+// Se ofrece guardarlo si el precio se puso a mano (sin margen o distinto al calculado) y deja ganancia
+const ofrecerMargenReal = computed(
+    () =>
+        margenReal.value !== null &&
+        margenReal.value > 0 &&
+        (form.margen === null || precioEditado.value) &&
+        Math.abs(margenReal.value - (form.margen ?? -1)) >= 0.01,
+);
+// Guarda como margen del producto la ganancia del precio escrito a mano, sin tocar ese precio
+const guardarMargenReal = () => {
+    const m = margenReal.value;
+    conservarPrecio = true;
+    form.margen = m;
+    margenSeleccion.value = props.margenes.includes(m) ? m : 'otro';
+    nextTick(() => (conservarPrecio = false));
+};
 
 // Utilidad real con el precio que quedó (calculado o escrito a mano)
 const utilidad = computed(() => analizarPrecio(form.precio_venta, form.costo, gravado.value));
@@ -224,7 +249,7 @@ const titulo = computed(() => (editando.value ? `Editar: ${p.nombre} ${p.concent
                             </template>
                             <template v-else-if="precioCalculado">
                                 <label class="text-sm">Precio calculado (con IGV)</label>
-                                <p class="text-lg font-semibold text-emerald-700 py-1.5">{{ precio(precioCalculado) }}</p>
+                                <p class="text-lg font-semibold text-emerald-700 py-1.5">{{ soles(precioCalculado) }}</p>
                             </template>
                         </div>
                     </div>
@@ -240,7 +265,7 @@ const titulo = computed(() => (editando.value ? `Editar: ${p.nombre} ${p.concent
                                 severity="secondary"
                                 outlined
                                 icon="pi pi-refresh"
-                                :label="`Usar precio calculado (${precio(precioCalculado)})`"
+                                :label="`Usar precio calculado (${soles(precioCalculado)})`"
                                 @click="aplicarCalculado"
                             />
                         </div>
@@ -275,7 +300,21 @@ const titulo = computed(() => (editando.value ? `Editar: ${p.nombre} ${p.concent
                             </tbody>
                         </table>
                         <p v-if="utilidad.ganancia < 0" class="text-red-600 font-medium mt-2"><i class="pi pi-exclamation-triangle mr-1"></i>Con este precio se vende a pérdida.</p>
-                        <p v-else-if="precioEditado" class="text-slate-500 mt-2">El precio fue cambiado a mano: el margen real es {{ pct(utilidad.margenCosto) }} sobre el costo.</p>
+                        <div v-else-if="ofrecerMargenReal" class="mt-3 flex flex-wrap items-center gap-2 rounded-lg border border-violet-200 bg-violet-50 p-2">
+                            <span class="text-violet-900">
+                                {{ form.margen === null ? 'Precio puesto a mano' : 'El precio fue cambiado a mano' }}: ganas
+                                <b>{{ margenReal }} %</b> sobre el costo. Guárdalo como margen para que las próximas compras sugieran el precio.
+                            </span>
+                            <Button
+                                type="button"
+                                size="small"
+                                severity="help"
+                                icon="pi pi-percentage"
+                                class="ml-auto"
+                                :label="`Guardar ${margenReal} % como margen`"
+                                @click="guardarMargenReal"
+                            />
+                        </div>
                     </div>
                     <p v-else class="mt-3 text-sm text-slate-500">Ingresa el costo y el precio de venta para ver la ganancia.</p>
                 </section>
@@ -307,7 +346,7 @@ const titulo = computed(() => (editando.value ? `Editar: ${p.nombre} ${p.concent
                         </div>
                         <div class="flex flex-col gap-1">
                             <label class="text-sm">Precio por {{ form.unidad_venta }} (con IGV) *</label>
-                            <InputNumber v-model="form.precio_venta" prefix="S/ " :minFractionDigits="3" :maxFractionDigits="3" :invalid="!!form.errors.precio_venta" fluid />
+                            <InputNumber v-model="form.precio_venta" prefix="S/ " :minFractionDigits="2" :maxFractionDigits="2" :invalid="!!form.errors.precio_venta" fluid />
                             <small class="text-red-600">{{ form.errors.precio_venta }}</small>
                         </div>
                         <div class="sm:col-span-2 flex flex-col gap-1">
@@ -349,9 +388,9 @@ const titulo = computed(() => (editando.value ? `Editar: ${p.nombre} ${p.concent
                         </div>
                         <div class="sm:col-span-2 flex flex-col gap-1">
                             <label class="text-sm">Precio por {{ form.unidad_fraccion }} (con IGV) *</label>
-                            <InputNumber v-model="form.precio_fraccion" prefix="S/ " :minFractionDigits="3" :maxFractionDigits="3" :invalid="!!form.errors.precio_fraccion" fluid />
+                            <InputNumber v-model="form.precio_fraccion" prefix="S/ " :minFractionDigits="2" :maxFractionDigits="3" :invalid="!!form.errors.precio_fraccion" fluid />
                             <small v-if="form.errors.precio_fraccion" class="text-red-600">{{ form.errors.precio_fraccion }}</small>
-                            <small v-else-if="fraccionCalculada" class="text-slate-500">Calculado con el margen: {{ precio(fraccionCalculada) }}</small>
+                            <small v-else-if="fraccionCalculada" class="text-slate-500">Calculado con el margen: {{ soles(fraccionCalculada) }}</small>
                         </div>
                     </div>
                 </section>

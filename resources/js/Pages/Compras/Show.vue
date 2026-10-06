@@ -1,5 +1,5 @@
 <script setup>
-import { computed } from 'vue';
+import { computed, ref, watch } from 'vue';
 import { Head, Link, router, usePage } from '@inertiajs/vue3';
 import AppLayout from '@/Layouts/AppLayout.vue';
 import DataTable from 'primevue/datatable';
@@ -12,6 +12,9 @@ import { soles, precio, fecha, cantidad } from '@/utils/formato';
 const props = defineProps({
     compra: Object,
     tiposDocumento: Object,
+    puedeActualizarPrecios: Boolean,
+    preciosSugeridos: { type: Array, default: () => [] },
+    sinMargen: { type: Array, default: () => [] },
 });
 
 const confirm = useConfirm();
@@ -34,6 +37,34 @@ const anular = () => {
         acceptProps: { label: 'Anular', severity: 'danger' },
         rejectProps: { label: 'Cancelar', severity: 'secondary', outlined: true },
         accept: () => router.post(`/compras/${props.compra.id}/anular`, {}, { preserveScroll: true }),
+    });
+};
+
+// Precios de venta sugeridos con el nuevo costo y el margen de cada producto (todos marcados al inicio)
+const seleccion = ref([...props.preciosSugeridos]);
+watch(() => props.preciosSugeridos, (lista) => (seleccion.value = [...lista]));
+const actualizando = ref(false);
+
+const diferencia = (actual, sugerido) => Number(sugerido) - Number(actual ?? 0);
+const claseDiferencia = (d) => (d > 0 ? 'text-red-600' : 'text-emerald-600');
+
+const actualizarPrecios = () => {
+    confirm.require({
+        header: 'Actualizar precios de venta',
+        message: `Se cambiará el precio de venta de ${seleccion.value.length} producto(s). Desde ahora se venderán al nuevo precio. ¿Continuar?`,
+        icon: 'pi pi-tags',
+        acceptProps: { label: 'Actualizar', severity: 'warn' },
+        rejectProps: { label: 'Cancelar', severity: 'secondary', outlined: true },
+        accept: () =>
+            router.post(
+                `/compras/${props.compra.id}/precios`,
+                { productos: seleccion.value.map((p) => p.id) },
+                {
+                    preserveScroll: true,
+                    onStart: () => (actualizando.value = true),
+                    onFinish: () => (actualizando.value = false),
+                },
+            ),
     });
 };
 </script>
@@ -102,6 +133,77 @@ const anular = () => {
                     <template #body="{ data }">{{ soles(data.total) }}</template>
                 </Column>
             </DataTable>
+        </section>
+
+        <!-- Nuevos precios de venta sugeridos (margen de cada producto sobre su nuevo costo) -->
+        <section
+            v-if="puedeActualizarPrecios && (preciosSugeridos.length || sinMargen.length)"
+            class="bg-white rounded-xl border border-amber-300 mb-6"
+        >
+            <div class="flex flex-wrap items-center gap-2 p-4 border-b border-amber-200 bg-amber-50 rounded-t-xl">
+                <i class="pi pi-tags text-amber-600"></i>
+                <div>
+                    <h2 class="font-semibold text-amber-900">Precios de venta sugeridos con el nuevo costo</h2>
+                    <p class="text-xs text-amber-800">Calculados con el margen de cada producto. Marca los que quieres actualizar.</p>
+                </div>
+                <Button
+                    v-if="preciosSugeridos.length"
+                    :label="`Actualizar ${seleccion.length} precio(s)`"
+                    icon="pi pi-check"
+                    severity="warn"
+                    class="ml-auto"
+                    :disabled="!seleccion.length"
+                    :loading="actualizando"
+                    @click="actualizarPrecios"
+                />
+            </div>
+
+            <p v-if="page.props.errors?.productos" class="m-4 p-3 rounded-lg bg-red-50 text-red-700 text-sm">{{ page.props.errors.productos }}</p>
+
+            <DataTable v-if="preciosSugeridos.length" v-model:selection="seleccion" :value="preciosSugeridos" dataKey="id" size="small">
+                <Column selectionMode="multiple" headerStyle="width: 3rem" />
+                <Column header="Producto">
+                    <template #body="{ data }">
+                        <span class="text-slate-500">{{ data.codigo }}</span> · {{ data.nombre }}
+                    </template>
+                </Column>
+                <Column header="Costo s/IGV" class="text-right">
+                    <template #body="{ data }">{{ precio(data.costo) }}</template>
+                </Column>
+                <Column header="Margen" class="text-right">
+                    <template #body="{ data }">{{ Number(data.margen) }} %</template>
+                </Column>
+                <Column header="Precio presentación (con IGV)">
+                    <template #body="{ data }">
+                        <span class="text-slate-500">{{ data.unidad_venta }}</span>
+                        {{ soles(data.precio_actual) }} <i class="pi pi-arrow-right text-xs text-slate-400 mx-1"></i>
+                        <span class="font-semibold">{{ soles(data.precio_sugerido) }}</span>
+                        <span v-if="diferencia(data.precio_actual, data.precio_sugerido) !== 0" class="ml-1 text-xs" :class="claseDiferencia(diferencia(data.precio_actual, data.precio_sugerido))">
+                            ({{ diferencia(data.precio_actual, data.precio_sugerido) > 0 ? '+' : '' }}{{ diferencia(data.precio_actual, data.precio_sugerido).toFixed(2) }})
+                        </span>
+                    </template>
+                </Column>
+                <Column header="Precio fracción (con IGV)">
+                    <template #body="{ data }">
+                        <template v-if="data.fraccion_sugerida !== null">
+                            <span class="text-slate-500">{{ data.unidad_fraccion }}</span>
+                            {{ soles(data.fraccion_actual ?? 0) }} <i class="pi pi-arrow-right text-xs text-slate-400 mx-1"></i>
+                            <span class="font-semibold">{{ soles(data.fraccion_sugerida) }}</span>
+                        </template>
+                        <span v-else class="text-slate-400">—</span>
+                    </template>
+                </Column>
+            </DataTable>
+            <p v-else class="p-4 text-sm text-emerald-700"><i class="pi pi-check-circle mr-1"></i>Los precios con margen ya están al día con este costo.</p>
+
+            <div v-if="sinMargen.length" class="p-4 border-t border-slate-100 text-sm text-slate-600">
+                <p class="mb-1"><i class="pi pi-info-circle text-sky-600 mr-1"></i>Sin margen asignado (revisa su precio a mano o asígnales un margen en Productos):</p>
+                <div class="flex flex-wrap gap-2">
+                    <Link v-for="p in sinMargen" :key="p.id" :href="`/productos/${p.id}/editar`" class="px-2 py-0.5 rounded bg-sky-50 text-sky-700 hover:bg-sky-100">
+                        {{ p.codigo }} · {{ p.nombre }}
+                    </Link>
+                </div>
+            </div>
         </section>
 
         <section class="flex flex-col lg:flex-row gap-6 lg:items-start">

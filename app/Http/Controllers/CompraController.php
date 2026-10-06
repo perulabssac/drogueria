@@ -3,8 +3,10 @@
 namespace App\Http\Controllers;
 
 use App\Models\Compra;
+use App\Models\Empresa;
 use App\Models\Producto;
 use App\Services\InventarioService;
+use App\Support\Precios;
 use Illuminate\Http\RedirectResponse;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\DB;
@@ -158,10 +160,15 @@ class CompraController extends Controller
             return $compra;
         });
 
-        return redirect("/compras/{$compra->id}")->with('success', "Compra {$compra->documento} registrada. El stock ya está disponible.");
+        $mensaje = "Compra {$compra->documento} registrada. El stock ya está disponible.";
+        if ($this->preciosSugeridos($compra)['sugeridos']) {
+            $mensaje .= ' Revisa abajo los nuevos precios de venta sugeridos.';
+        }
+
+        return redirect("/compras/{$compra->id}")->with('success', $mensaje);
     }
 
-    public function show(Compra $compra): Response
+    public function show(Request $request, Compra $compra): Response
     {
         $compra->load([
             'proveedor',
@@ -170,10 +177,64 @@ class CompraController extends Controller
             'pagos.usuario:id,name',
         ]);
 
+        // Solo almacén y admin cambian precios; en una compra anulada no tiene sentido
+        $puedeActualizarPrecios = $compra->estado !== 'anulada' && $request->user()->tieneRol('almacen');
+        $precios = $puedeActualizarPrecios ? $this->preciosSugeridos($compra) : ['sugeridos' => [], 'sinMargen' => []];
+
         return Inertia::render('Compras/Show', [
             'compra' => $compra,
             'tiposDocumento' => Compra::TIPOS_DOCUMENTO,
+            'puedeActualizarPrecios' => $puedeActualizarPrecios,
+            'preciosSugeridos' => $precios['sugeridos'],
+            'sinMargen' => $precios['sinMargen'],
         ]);
+    }
+
+    /**
+     * Actualiza el precio de venta de los productos elegidos con su margen y su costo actual.
+     * El precio se vuelve a calcular aquí (no se confía en el que manda el navegador).
+     */
+    public function actualizarPrecios(Request $request, Compra $compra): RedirectResponse
+    {
+        if ($compra->estado === 'anulada') {
+            return back()->with('error', 'Esta compra está anulada.');
+        }
+
+        $deLaCompra = $compra->items()->where('bonificacion', false)->pluck('producto_id')->unique()->values()->all();
+
+        $datos = $request->validate([
+            'productos' => ['required', 'array', 'min:1'],
+            'productos.*' => ['integer', Rule::in($deLaCompra)],
+        ], [
+            'productos.required' => 'Selecciona al menos un producto.',
+            'productos.min' => 'Selecciona al menos un producto.',
+            'productos.*.in' => 'Uno de los productos no pertenece a esta compra.',
+        ]);
+
+        $empresa = Empresa::actual();
+
+        $actualizados = DB::transaction(function () use ($datos, $empresa) {
+            $total = 0;
+            foreach (Producto::whereIn('id', $datos['productos'])->lockForUpdate()->get() as $producto) {
+                $nuevo = Precios::sugeridosProducto($producto, null, $empresa);
+                if ($nuevo === null || $nuevo['precio_venta'] <= 0) {
+                    continue;
+                }
+
+                $cambios = ['precio_venta' => $nuevo['precio_venta']];
+                if ($nuevo['precio_fraccion'] !== null) {
+                    $cambios['precio_fraccion'] = $nuevo['precio_fraccion'];
+                }
+                $producto->update($cambios);
+                $total++;
+            }
+
+            return $total;
+        });
+
+        return back()->with('success', $actualizados === 1
+            ? 'Se actualizó el precio de 1 producto.'
+            : "Se actualizaron los precios de {$actualizados} productos.");
     }
 
     /** Anula la compra y retira del almacén lo que ingresó (si aún está). */
@@ -192,5 +253,55 @@ class CompraController extends Controller
         });
 
         return back()->with('success', "Compra {$compra->documento} anulada y stock retirado.");
+    }
+
+    /**
+     * Precios de venta sugeridos para los productos de la compra (sin bonificaciones),
+     * con el margen de cada producto y su último costo. Solo se listan los que cambian.
+     *
+     * @return array{sugeridos: array, sinMargen: array}
+     */
+    private function preciosSugeridos(Compra $compra): array
+    {
+        $empresa = Empresa::actual();
+        $ids = $compra->items()->where('bonificacion', false)->pluck('producto_id')->unique();
+        $sugeridos = [];
+        $sinMargen = [];
+
+        foreach (Producto::whereIn('id', $ids)->orderBy('nombre')->get() as $producto) {
+            $nombre = trim("{$producto->nombre} {$producto->concentracion} {$producto->presentacion}");
+            $nuevo = Precios::sugeridosProducto($producto, null, $empresa);
+
+            if ($nuevo === null) {
+                $sinMargen[] = ['id' => $producto->id, 'codigo' => $producto->codigo, 'nombre' => $nombre];
+
+                continue;
+            }
+
+            $precioActual = (float) $producto->precio_venta;
+            $fraccionActual = $producto->precio_fraccion !== null ? (float) $producto->precio_fraccion : null;
+            $cambiaPrecio = abs($nuevo['precio_venta'] - $precioActual) >= 0.005;
+            $cambiaFraccion = $nuevo['precio_fraccion'] !== null && abs($nuevo['precio_fraccion'] - (float) $fraccionActual) >= 0.005;
+
+            if ($nuevo['precio_venta'] <= 0 || (! $cambiaPrecio && ! $cambiaFraccion)) {
+                continue;
+            }
+
+            $sugeridos[] = [
+                'id' => $producto->id,
+                'codigo' => $producto->codigo,
+                'nombre' => $nombre,
+                'unidad_venta' => $producto->unidad_venta,
+                'unidad_fraccion' => $producto->unidad_fraccion,
+                'costo' => (float) $producto->costo,
+                'margen' => $nuevo['margen'],
+                'precio_actual' => $precioActual,
+                'precio_sugerido' => $nuevo['precio_venta'],
+                'fraccion_actual' => $fraccionActual,
+                'fraccion_sugerida' => $nuevo['precio_fraccion'],
+            ];
+        }
+
+        return ['sugeridos' => $sugeridos, 'sinMargen' => $sinMargen];
     }
 }
