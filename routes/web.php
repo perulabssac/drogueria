@@ -25,6 +25,7 @@ use App\Http\Controllers\TomaInventarioController;
 use App\Http\Controllers\UsuarioController;
 use App\Http\Controllers\VencimientoController;
 use App\Http\Controllers\VentaController;
+use App\Http\Controllers\RentabilidadController;
 use Illuminate\Support\Facades\Route;
 
 // Solo para visitantes (no logueados)
@@ -210,6 +211,8 @@ Route::middleware('auth')->group(function () {
         Route::get('/reportes/ventas.xlsx', [ReporteContableController::class, 'excelVentas'])->name('reportes.ventas');
         Route::get('/reportes/compras.xlsx', [ReporteContableController::class, 'excelCompras'])->name('reportes.compras');
         Route::get('/reportes/xml.zip', [ReporteContableController::class, 'xml'])->name('reportes.xml');
+        Route::get('/rentabilidad', [RentabilidadController::class, 'index'])->name('rentabilidad.index');
+        Route::get('/rentabilidad/excel', [RentabilidadController::class, 'excel'])->name('rentabilidad.excel');
     });
 
     // Solo administrador: historial de cajas, usuarios, notas de crédito y bajas

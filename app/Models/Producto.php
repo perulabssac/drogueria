@@ -53,6 +53,7 @@ class Producto extends Model
             'precio_venta' => 'decimal:3',
             'precio_fraccion' => 'decimal:3',
             'costo' => 'decimal:4',
+            'margen' => 'decimal:2',
             'unidades_por_presentacion' => 'integer',
             'stock_minimo' => 'integer',
         ];
