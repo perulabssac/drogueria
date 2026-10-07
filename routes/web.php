@@ -1,6 +1,7 @@
 <?php
 
 use App\Http\Controllers\AjusteController;
+use App\Http\Controllers\AuditoriaController;
 use App\Http\Controllers\AuthController;
 use App\Http\Controllers\CajaController;
 use App\Http\Controllers\ClienteController;
@@ -19,13 +20,13 @@ use App\Http\Controllers\NotaCreditoController;
 use App\Http\Controllers\PerfilController;
 use App\Http\Controllers\ProductoController;
 use App\Http\Controllers\ProveedorController;
+use App\Http\Controllers\RentabilidadController;
 use App\Http\Controllers\ReporteContableController;
 use App\Http\Controllers\StockController;
 use App\Http\Controllers\TomaInventarioController;
 use App\Http\Controllers\UsuarioController;
 use App\Http\Controllers\VencimientoController;
 use App\Http\Controllers\VentaController;
-use App\Http\Controllers\RentabilidadController;
 use Illuminate\Support\Facades\Route;
 
 // Solo para visitantes (no logueados)
@@ -205,7 +206,7 @@ Route::middleware('auth')->group(function () {
     Route::post('/cuentas-por-pagar/{compra}/pagos', [CuentaPagarController::class, 'pagar'])->middleware('rol:contador')->name('cuentas-pagar.pagar');
     Route::post('/cuentas-por-pagar/pagos/{pago}/anular', [CuentaPagarController::class, 'anularPago'])->middleware('rol:admin')->name('cuentas-pagar.anular');
 
-    // Reportes contables: contador y administrador
+    // Reportes contables y rentabilidad: contador y administrador
     Route::middleware('rol:contador')->group(function () {
         Route::get('/reportes', [ReporteContableController::class, 'index'])->name('reportes.index');
         Route::get('/reportes/ventas.xlsx', [ReporteContableController::class, 'excelVentas'])->name('reportes.ventas');
@@ -215,9 +216,12 @@ Route::middleware('auth')->group(function () {
         Route::get('/rentabilidad/excel', [RentabilidadController::class, 'excel'])->name('rentabilidad.excel');
     });
 
-    // Solo administrador: historial de cajas, usuarios, notas de crédito y bajas
+    // Solo administrador: historial de cajas, auditoría, usuarios, notas de crédito y bajas
     Route::middleware('rol:admin')->group(function () {
         Route::get('/cajas', [CajaController::class, 'index'])->name('cajas.index');
+
+        // Auditoría: quién hizo qué, cuándo y desde dónde (solo lectura)
+        Route::get('/auditoria', [AuditoriaController::class, 'index'])->name('auditoria.index');
 
         // Usuarios del sistema
         Route::get('/usuarios', [UsuarioController::class, 'index'])->name('usuarios.index');

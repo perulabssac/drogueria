@@ -61,6 +61,7 @@ const areas = [
             { texto: 'Reportes contables', icono: 'pi pi-chart-bar', url: '/reportes', roles: ['contador'] },
             { texto: 'Rentabilidad', icono: 'pi pi-chart-line', url: '/rentabilidad', roles: ['contador'] },
             { texto: 'Usuarios', icono: 'pi pi-users', url: '/usuarios', roles: [] }, // solo admin
+            { texto: 'Auditoría', icono: 'pi pi-eye', url: '/auditoria', roles: [] }, // solo admin
             { texto: 'Configuración', icono: 'pi pi-cog', url: '/configuracion', roles: [] }, // solo admin
         ],
     },
