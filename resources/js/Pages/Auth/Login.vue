@@ -1,10 +1,13 @@
 <script setup>
-import { Head, useForm } from '@inertiajs/vue3';
+import { computed } from 'vue';
+import { Head, useForm, usePage } from '@inertiajs/vue3';
 import InputText from 'primevue/inputtext';
 import Password from 'primevue/password';
 import Checkbox from 'primevue/checkbox';
 import Button from 'primevue/button';
-import Message from 'primevue/message';
+
+// Nombre y logo de la empresa (se configuran en Configuración → Empresa)
+const marca = computed(() => usePage().props.marca);
 
 const form = useForm({
     email: '',
@@ -20,12 +23,15 @@ const ingresar = () => {
 <template>
     <Head title="Iniciar sesión" />
 
-    <div class="min-h-screen flex items-center justify-center bg-gradient-to-br from-emerald-50 to-slate-100 p-4">
+    <div class="min-h-screen flex flex-col items-center justify-center bg-gradient-to-br from-emerald-50 to-slate-100 p-4">
         <div class="w-full max-w-sm bg-white rounded-2xl shadow-lg p-8">
             <div class="text-center mb-6">
-                <i class="pi pi-shield text-4xl text-emerald-500"></i>
-                <h1 class="text-2xl font-semibold mt-2">Droguería</h1>
-                <p class="text-slate-500 text-sm">Ingresa con tu cuenta</p>
+                <img v-if="marca?.logo" :src="marca.logo" :alt="marca.nombre" class="mx-auto max-h-24 max-w-full object-contain" />
+                <template v-else>
+                    <i class="pi pi-shield text-4xl text-emerald-500"></i>
+                    <h1 class="text-2xl font-semibold mt-2">{{ marca?.nombre ?? 'Droguería' }}</h1>
+                </template>
+                <p class="text-slate-500 text-sm mt-3">Ingresa con tu cuenta</p>
             </div>
 
             <form class="space-y-4" @submit.prevent="ingresar">
@@ -47,10 +53,10 @@ const ingresar = () => {
 
                 <Button type="submit" label="Ingresar" icon="pi pi-sign-in" :loading="form.processing" fluid />
             </form>
-
-            <Message severity="info" class="mt-6" size="small">
-                Prueba: admin@drogueria.test / password
-            </Message>
         </div>
+
+        <p class="mt-6 text-xs text-slate-500">
+            Desarrollado por <span class="font-medium text-slate-600">Perú Labs S.A.C.</span>
+        </p>
     </div>
 </template>

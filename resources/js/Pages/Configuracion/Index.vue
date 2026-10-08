@@ -30,6 +30,7 @@ const props = defineProps({
     series: Array,
     tiposSerie: Object,
     pruebaSunat: Object, // resultado del último envío de prueba
+    logoUrl: String, // null si aún no hay logo
 });
 
 const confirm = useConfirm();
@@ -51,6 +52,32 @@ const formEmpresa = useForm({
     cuentas_bancarias: props.empresa.cuentas_bancarias ?? '',
 });
 const guardarEmpresa = () => formEmpresa.put('/configuracion/empresa', { preserveScroll: true });
+
+// Logo: se muestra una vista previa antes de subirlo
+const formLogo = useForm({ logo: null });
+const vistaPrevia = ref(null);
+const claveArchivo = ref(0); // cambia para vaciar el selector de archivo
+const elegirLogo = (evento) => {
+    const archivo = evento.target.files[0] ?? null;
+    formLogo.logo = archivo;
+    formLogo.clearErrors();
+    vistaPrevia.value = archivo ? URL.createObjectURL(archivo) : null;
+};
+const limpiarLogo = () => {
+    formLogo.reset();
+    vistaPrevia.value = null;
+    claveArchivo.value++;
+};
+const subirLogo = () => formLogo.post('/configuracion/logo', { forceFormData: true, preserveScroll: true, onSuccess: limpiarLogo });
+const eliminarLogo = () =>
+    confirm.require({
+        header: 'Quitar logo',
+        message: 'El sistema y los comprobantes se mostrarán sin logo. ¿Continuar?',
+        icon: 'pi pi-exclamation-triangle',
+        acceptProps: { label: 'Quitar', severity: 'danger' },
+        rejectProps: { label: 'Cancelar', severity: 'secondary', outlined: true },
+        accept: () => router.delete('/configuracion/logo', { preserveScroll: true }),
+    });
 
 // ================= CONEXIÓN SUNAT =================
 const opcionesEntorno = [
@@ -133,6 +160,43 @@ const guardarSerie = () => formSerie.post('/configuracion/series', { preserveScr
             <TabPanels class="!bg-transparent !px-0">
                 <!-- ================= EMPRESA ================= -->
                 <TabPanel value="empresa">
+                    <!-- Logo -->
+                    <section class="bg-white rounded-xl border border-slate-200 p-5 mb-6">
+                        <h2 class="font-semibold">Logo</h2>
+                        <p class="text-sm text-slate-500 mb-4">
+                            Aparece en las facturas y boletas (PDF), en la pantalla de inicio de sesión y en el menú. PNG o JPG horizontal, de máximo 1 MB.
+                        </p>
+                        <div class="flex flex-wrap items-center gap-6">
+                            <div class="w-72 h-24 rounded-lg border border-dashed border-slate-300 bg-slate-50 flex items-center justify-center p-2">
+                                <img v-if="vistaPrevia || logoUrl" :src="vistaPrevia || logoUrl" alt="Logo" class="max-h-full max-w-full object-contain" />
+                                <span v-else class="text-sm text-slate-400">Sin logo</span>
+                            </div>
+                            <form class="flex-1 min-w-64 space-y-3" @submit.prevent="subirLogo">
+                                <p v-if="vistaPrevia" class="text-sm text-amber-700">Vista previa: pulsa "{{ logoUrl ? 'Cambiar logo' : 'Subir logo' }}" para guardarlo.</p>
+                                <input
+                                    :key="claveArchivo"
+                                    type="file"
+                                    accept="image/png,image/jpeg"
+                                    class="block w-full text-sm file:mr-3 file:rounded-lg file:border-0 file:bg-violet-50 file:px-3 file:py-2 file:text-violet-700 hover:file:bg-violet-100"
+                                    @input="elegirLogo"
+                                />
+                                <small v-if="formLogo.errors.logo" class="text-red-600 block">{{ formLogo.errors.logo }}</small>
+                                <div class="flex gap-2">
+                                    <Button
+                                        type="submit"
+                                        :label="logoUrl ? 'Cambiar logo' : 'Subir logo'"
+                                        icon="pi pi-upload"
+                                        severity="help"
+                                        :disabled="!formLogo.logo"
+                                        :loading="formLogo.processing"
+                                    />
+                                    <Button v-if="vistaPrevia" type="button" label="Descartar" severity="secondary" text @click="limpiarLogo" />
+                                    <Button v-else-if="logoUrl" type="button" label="Quitar logo" icon="pi pi-trash" severity="danger" text @click="eliminarLogo" />
+                                </div>
+                            </form>
+                        </div>
+                    </section>
+
                     <form class="bg-white rounded-xl border border-slate-200 p-5 space-y-4" @submit.prevent="guardarEmpresa">
                         <p class="text-sm text-slate-500">Estos datos aparecen en tus comprobantes y en el XML que recibe SUNAT. Deben coincidir con tu ficha RUC.</p>
                         <div class="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-4 gap-4">

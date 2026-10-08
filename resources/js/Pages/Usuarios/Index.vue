@@ -25,6 +25,9 @@ const rol = ref(props.filtros.rol ?? null);
 const opcionesRol = Object.entries(props.roles).map(([value, label]) => ({ value, label }));
 const COLOR_ROL = { admin: 'danger', vendedor: 'info', almacen: 'warn', contador: 'contrast' };
 
+// El usuario de soporte de Perú Labs solo lo modifica otro súper administrador
+const puedeGestionar = (u) => !u.es_superadmin || yo.es_superadmin;
+
 const recargar = (extra = {}) =>
     router.get('/usuarios', { buscar: buscar.value || undefined, rol: rol.value || undefined, ...extra }, { preserveState: true, preserveScroll: true, replace: true });
 
@@ -78,6 +81,7 @@ const cambiarEstado = (u) =>
                         <p class="font-medium">
                             {{ data.name }}
                             <span v-if="data.id === yo.id" class="text-xs text-slate-500">(tú)</span>
+                            <Tag v-if="data.es_superadmin" value="Soporte Perú Labs" severity="help" icon="pi pi-shield" class="ml-1" />
                         </p>
                         <p class="text-xs text-slate-500">{{ data.email }}</p>
                     </template>
@@ -98,7 +102,10 @@ const cambiarEstado = (u) =>
                 </Column>
                 <Column class="text-right">
                     <template #body="{ data }">
-                        <div class="flex justify-end gap-1">
+                        <span v-if="!puedeGestionar(data)" class="text-xs text-slate-400" v-tooltip.top="'Solo Perú Labs puede modificar este usuario'">
+                            <i class="pi pi-lock mr-1"></i>Protegido
+                        </span>
+                        <div v-else class="flex justify-end gap-1">
                             <Link :href="`/usuarios/${data.id}/editar`">
                                 <Button icon="pi pi-pencil" severity="info" size="small" v-tooltip.top="'Editar'" />
                             </Link>

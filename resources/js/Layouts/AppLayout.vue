@@ -4,6 +4,7 @@ import { Link, router, usePage } from '@inertiajs/vue3';
 import Toast from 'primevue/toast';
 import ConfirmDialog from 'primevue/confirmdialog';
 import Button from 'primevue/button';
+import Menu from 'primevue/menu';
 import Tag from 'primevue/tag';
 import { useToast } from 'primevue/usetoast';
 
@@ -15,6 +16,7 @@ const menuAbierto = ref(false);
 
 const usuario = computed(() => page.props.auth.user);
 const empresa = computed(() => page.props.empresa);
+const marca = computed(() => page.props.marca); // nombre y logo de la empresa
 
 // Menú agrupado por áreas. "roles" indica quién ve cada opción (el admin ve todo).
 // Un área se muestra solo si el usuario puede ver al menos una de sus opciones.
@@ -117,6 +119,24 @@ watch(
 );
 
 const salir = () => router.post('/logout');
+
+// Menú del usuario (arriba a la derecha): sus datos, cambiar contraseña y cerrar sesión
+const menuUsuario = ref();
+const iniciales = computed(() =>
+    (usuario.value.name ?? '')
+        .split(' ')
+        .filter(Boolean)
+        .slice(0, 2)
+        .map((p) => p[0])
+        .join('')
+        .toUpperCase(),
+);
+const opcionesUsuario = [
+    { label: 'Cambiar mi contraseña', icon: 'pi pi-key', command: () => router.visit('/perfil/password') },
+    { label: 'Ayuda y soporte', icon: 'pi pi-question-circle', command: () => router.visit('/soporte') },
+    { separator: true },
+    { label: 'Cerrar sesión', icon: 'pi pi-sign-out', peligro: true, command: salir },
+];
 </script>
 
 <template>
@@ -130,9 +150,9 @@ const salir = () => router.post('/logout');
             :class="menuAbierto ? 'translate-x-0' : '-translate-x-full'"
         >
             <div class="px-5 py-5 border-b border-slate-800">
-                <div class="flex items-center gap-2">
-                    <i class="pi pi-shield text-emerald-400 text-xl"></i>
-                    <span class="font-semibold text-white">Droguería</span>
+                <div class="flex items-start gap-2">
+                    <i class="pi pi-shield text-emerald-400 text-xl mt-0.5"></i>
+                    <span class="font-semibold text-white leading-tight">{{ marca?.nombre ?? 'Droguería' }}</span>
                 </div>
                 <p class="text-xs text-slate-400 mt-1 truncate">{{ empresa?.razon_social }}</p>
             </div>
@@ -165,9 +185,24 @@ const salir = () => router.post('/logout');
                 </div>
             </nav>
 
-            <div class="px-5 py-4 border-t border-slate-800 text-xs">
-                <p class="text-white font-medium">{{ usuario.name }}</p>
-                <p class="text-slate-400 capitalize">{{ usuario.rol }} · {{ usuario.sucursal }}</p>
+            <div class="px-5 py-4 border-t border-slate-800">
+                <!-- Ayuda y soporte: botón visible para todos los usuarios -->
+                <Link
+                    href="/soporte"
+                    class="flex items-center justify-center gap-2 rounded-lg border px-3 py-2 text-sm font-medium transition-colors"
+                    :class="
+                        activo('/soporte')
+                            ? 'border-sky-400 bg-sky-500/30 text-white'
+                            : 'border-sky-500/40 bg-sky-500/10 text-sky-300 hover:bg-sky-500/20 hover:text-sky-200'
+                    "
+                    @click="menuAbierto = false"
+                >
+                    <i class="pi pi-question-circle"></i>
+                    Ayuda y soporte
+                </Link>
+                <p class="mt-2 text-center text-[11px] text-slate-500">
+                    Desarrollado por <span class="font-medium text-slate-400">Perú Labs S.A.C.</span>
+                </p>
             </div>
         </aside>
 
@@ -185,10 +220,39 @@ const salir = () => router.post('/logout');
                         :value="empresa.entorno === 'produccion' ? 'SUNAT producción' : 'SUNAT pruebas (beta)'"
                         :severity="empresa.entorno === 'produccion' ? 'success' : 'warn'"
                     />
-                    <Link href="/perfil/password">
-                        <Button icon="pi pi-key" text rounded severity="secondary" v-tooltip.bottom="'Cambiar mi contraseña'" />
+                    <Link href="/soporte" class="hidden sm:block">
+                        <Button icon="pi pi-question-circle" text rounded severity="info" v-tooltip.bottom="'Ayuda y soporte'" />
                     </Link>
-                    <Button icon="pi pi-sign-out" text rounded severity="secondary" v-tooltip.bottom="'Cerrar sesión'" @click="salir" />
+
+                    <!-- Usuario: al hacer clic se abre su menú -->
+                    <button
+                        type="button"
+                        class="flex items-center gap-2 rounded-lg px-2 py-1 hover:bg-slate-100 transition-colors"
+                        aria-haspopup="true"
+                        @click="menuUsuario.toggle($event)"
+                    >
+                        <span class="w-8 h-8 rounded-full bg-emerald-600 text-white text-xs font-semibold flex items-center justify-center">{{ iniciales }}</span>
+                        <span class="hidden md:block text-left leading-tight">
+                            <span class="block text-sm font-medium">{{ usuario.name }}</span>
+                            <span class="block text-xs text-slate-500 capitalize">{{ usuario.rol }} · {{ usuario.sucursal }}</span>
+                        </span>
+                        <i class="pi pi-chevron-down text-xs text-slate-400"></i>
+                    </button>
+                    <Menu ref="menuUsuario" :model="opcionesUsuario" popup class="min-w-56">
+                        <template #start>
+                            <div class="px-3 py-2 border-b border-slate-100">
+                                <p class="text-sm font-medium">{{ usuario.name }}</p>
+                                <p class="text-xs text-slate-500">{{ usuario.email }}</p>
+                                <p class="text-xs text-slate-500 capitalize">{{ usuario.rol }} · {{ usuario.sucursal }}</p>
+                            </div>
+                        </template>
+                        <template #item="{ item, props }">
+                            <a v-bind="props.action" class="flex items-center gap-2 px-3 py-2 text-sm" :class="item.peligro ? 'text-red-600' : ''">
+                                <i :class="item.icon"></i>
+                                <span>{{ item.label }}</span>
+                            </a>
+                        </template>
+                    </Menu>
                 </div>
             </header>
 

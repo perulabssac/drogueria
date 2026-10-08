@@ -49,6 +49,10 @@ const titulo = computed(() => (editando.value ? `Editar usuario: ${u.name}` : 'N
     <Head :title="titulo" />
     <AppLayout :titulo="titulo">
         <form class="space-y-6" @submit.prevent="guardar">
+            <Message v-if="u?.es_superadmin" severity="info" :closable="false">
+                <i class="pi pi-shield mr-1"></i>Este es el usuario de <b>soporte de Perú Labs</b> (súper administrador). Tiene todos los permisos de un administrador.
+            </Message>
+
             <section class="bg-white rounded-xl border border-slate-200 p-5">
                 <h2 class="font-semibold mb-4">Datos de acceso</h2>
                 <div class="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-4 gap-4">
@@ -82,7 +86,8 @@ const titulo = computed(() => (editando.value ? `Editar usuario: ${u.name}` : 'N
             <section class="bg-white rounded-xl border border-slate-200 p-5">
                 <h2 class="font-semibold">{{ editando ? 'Cambiar contraseña' : 'Contraseña inicial' }}</h2>
                 <p class="text-xs text-slate-500 mb-4">
-                    {{ editando ? 'Déjalo en blanco para mantener la actual. ' : '' }}Mínimo 8 caracteres, con letras y números. El usuario podrá cambiarla después desde el ícono de llave.
+                    {{ editando ? 'Déjalo en blanco para mantener la actual. ' : '' }}Mínimo 8 caracteres, con letras y números. El usuario podrá cambiarla
+                    después desde su menú (arriba a la derecha) → Cambiar mi contraseña.
                 </p>
                 <div class="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-4 gap-4">
                     <div class="flex flex-col gap-1">

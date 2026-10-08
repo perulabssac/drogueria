@@ -22,6 +22,7 @@ use App\Http\Controllers\ProductoController;
 use App\Http\Controllers\ProveedorController;
 use App\Http\Controllers\RentabilidadController;
 use App\Http\Controllers\ReporteContableController;
+use App\Http\Controllers\SoporteController;
 use App\Http\Controllers\StockController;
 use App\Http\Controllers\TomaInventarioController;
 use App\Http\Controllers\UsuarioController;
@@ -41,10 +42,16 @@ Route::get('/c/{comprobante}', [ComprobantePublicoController::class, 'pdf'])
     ->middleware(['signed', 'throttle:30,1'])
     ->name('comprobantes.publico');
 
+// Logo de la empresa: público porque se muestra en la pantalla de inicio de sesión
+Route::get('/logo-empresa', [ConfiguracionController::class, 'logo'])->name('empresa.logo');
+
 // Solo para usuarios logueados
 Route::middleware('auth')->group(function () {
     Route::post('/logout', [AuthController::class, 'destroy'])->name('logout');
     Route::get('/', DashboardController::class)->name('dashboard');
+
+    // Ayuda y soporte (todos los usuarios)
+    Route::get('/soporte', SoporteController::class)->name('soporte');
 
     // Cambiar mi contraseña (todos los usuarios)
     Route::get('/perfil/password', [PerfilController::class, 'edit'])->name('perfil.password');
@@ -246,6 +253,8 @@ Route::middleware('auth')->group(function () {
     Route::middleware('rol:admin')->prefix('configuracion')->group(function () {
         Route::get('/', [ConfiguracionController::class, 'index'])->name('configuracion.index');
         Route::put('/empresa', [ConfiguracionController::class, 'actualizarEmpresa']);
+        Route::post('/logo', [ConfiguracionController::class, 'subirLogo']);
+        Route::delete('/logo', [ConfiguracionController::class, 'eliminarLogo']);
         Route::put('/sunat', [ConfiguracionController::class, 'actualizarSunat']);
         Route::post('/certificado', [ConfiguracionController::class, 'subirCertificado']);
         Route::post('/certificado-demo', [ConfiguracionController::class, 'certificadoDemo']);

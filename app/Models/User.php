@@ -15,6 +15,8 @@ class User extends Authenticatable
 
     public const ROLES = ['admin', 'vendedor', 'almacen', 'contador'];
 
+    // es_superadmin NO está aquí a propósito: no se puede asignar desde un formulario,
+    // solo desde el código (forceFill) al instalar el sistema.
     protected $fillable = ['name', 'email', 'password', 'rol', 'activo', 'sucursal_id'];
 
     protected $hidden = ['password', 'remember_token'];
@@ -25,6 +27,7 @@ class User extends Authenticatable
             'email_verified_at' => 'datetime',
             'password' => 'hashed',
             'activo' => 'boolean',
+            'es_superadmin' => 'boolean',
         ];
     }
 
@@ -37,5 +40,11 @@ class User extends Authenticatable
     public function tieneRol(string ...$roles): bool
     {
         return $this->rol === 'admin' || in_array($this->rol, $roles, true);
+    }
+
+    /** Usuario de soporte de Perú Labs: administrador con permisos técnicos adicionales. */
+    public function esSuperadmin(): bool
+    {
+        return (bool) $this->es_superadmin;
     }
 }

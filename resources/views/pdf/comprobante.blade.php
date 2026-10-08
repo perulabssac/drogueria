@@ -4,6 +4,7 @@
     $direccionEmpresa = collect([$e->direccion, $e->distrito, $e->provincia, $e->departamento])->filter()->implode(' - ');
     $hayGratuitas = (float) $c->op_gratuitas > 0;
     $sinValidez = in_array($c->estado, \App\Models\Comprobante::ESTADOS_SIN_VALIDEZ, true);
+    $logo = $e->logoDataUri(); // imagen incrustada: dompdf no descarga nada de internet
 @endphp
 <!DOCTYPE html>
 <html lang="es">
@@ -42,9 +43,15 @@
     <table>
         <tr>
             <td style="padding-right: 16px;">
-                <div style="font-size: 13pt; font-weight: bold;">{{ $e->nombre_comercial ?: $e->razon_social }}</div>
-                @if ($e->nombre_comercial)
-                    <div class="negrita">{{ $e->razon_social }}</div>
+                @if ($logo)
+                    {{-- Con logo: el logo ya muestra el nombre comercial; la razón social es obligatoria --}}
+                    <img src="{{ $logo }}" alt="Logo" style="max-height: 64px; max-width: 260px; margin-bottom: 6px;">
+                    <div class="negrita" style="font-size: 10pt;">{{ $e->razon_social }}</div>
+                @else
+                    <div style="font-size: 13pt; font-weight: bold;">{{ $e->nombre_comercial ?: $e->razon_social }}</div>
+                    @if ($e->nombre_comercial)
+                        <div class="negrita">{{ $e->razon_social }}</div>
+                    @endif
                 @endif
                 <div>{{ $direccionEmpresa }}</div>
                 @if ($c->sucursal && $c->sucursal->direccion && $c->sucursal->direccion !== $e->direccion)

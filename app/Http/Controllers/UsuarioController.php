@@ -56,8 +56,10 @@ class UsuarioController extends Controller
         return Inertia::render('Usuarios/Form', $this->datosFormulario(null));
     }
 
-    public function edit(User $usuario): Response
+    public function edit(Request $request, User $usuario): Response
     {
+        abort_if($this->esProtegido($request->user(), $usuario), 403, 'Este es el usuario de soporte de Perú Labs: solo Perú Labs puede modificarlo.');
+
         return Inertia::render('Usuarios/Form', $this->datosFormulario($usuario));
     }
 
@@ -71,6 +73,10 @@ class UsuarioController extends Controller
 
     public function update(Request $request, User $usuario): RedirectResponse
     {
+        if ($this->esProtegido($request->user(), $usuario)) {
+            return redirect('/usuarios')->with('error', 'Este es el usuario de soporte de Perú Labs: solo Perú Labs puede modificarlo.');
+        }
+
         $datos = $this->validar($request, $usuario);
 
         // La contraseña solo se cambia si se escribió una nueva
@@ -87,6 +93,10 @@ class UsuarioController extends Controller
     /** Activar o desactivar desde la lista. Un usuario inactivo no puede ingresar. */
     public function cambiarEstado(Request $request, User $usuario): RedirectResponse
     {
+        if ($this->esProtegido($request->user(), $usuario)) {
+            return back()->with('error', 'Este es el usuario de soporte de Perú Labs: solo Perú Labs puede desactivarlo.');
+        }
+
         $datos = ['activo' => ! $usuario->activo];
         $this->protegerAdministradores($request->user(), $usuario, $datos);
         $usuario->update($datos);
@@ -99,7 +109,7 @@ class UsuarioController extends Controller
     private function datosFormulario(?User $usuario): array
     {
         return [
-            'usuario' => $usuario?->only(['id', 'name', 'email', 'rol', 'sucursal_id', 'activo']),
+            'usuario' => $usuario?->only(['id', 'name', 'email', 'rol', 'sucursal_id', 'activo', 'es_superadmin']),
             'roles' => self::ROLES,
             'sucursales' => Sucursal::query()->where('activo', true)->orderBy('nombre')->get(['id', 'nombre']),
         ];
@@ -128,9 +138,18 @@ class UsuarioController extends Controller
     }
 
     /**
+     * El usuario de soporte de Perú Labs (súper administrador) solo lo modifica otro súper administrador:
+     * el administrador del negocio no puede cambiar su contraseña, su rol ni desactivarlo.
+     */
+    private function esProtegido(User $actual, User $usuario): bool
+    {
+        return $usuario->es_superadmin && ! $actual->es_superadmin;
+    }
+
+    /**
      * Evita quedarse sin administradores:
      * - Nadie puede quitarse a sí mismo el rol de admin ni desactivarse.
-     * - Siempre debe quedar al menos un administrador activo.
+     * - Siempre debe quedar al menos un administrador activo del negocio (sin contar al de soporte).
      */
     private function protegerAdministradores(User $actual, User $usuario, array $datos): void
     {
@@ -147,9 +166,10 @@ class UsuarioController extends Controller
             ]);
         }
 
-        $otrosAdmins = User::query()->where('rol', 'admin')->where('activo', true)->whereKeyNot($usuario->id)->count();
-        if ($otrosAdmins === 0) {
-            throw ValidationException::withMessages(['rol' => 'Debe quedar al menos un administrador activo.']);
+        $otrosAdmins = User::query()->where('rol', 'admin')->where('activo', true)->where('es_superadmin', false)
+            ->whereKeyNot($usuario->id)->count();
+        if ($otrosAdmins === 0 && ! $usuario->es_superadmin) {
+            throw ValidationException::withMessages(['rol' => 'Debe quedar al menos un administrador activo del negocio.']);
         }
     }
 }

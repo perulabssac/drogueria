@@ -15,8 +15,17 @@ use Illuminate\Database\Seeder;
 
 class DatabaseSeeder extends Seeder
 {
+    /**
+     * Datos de PRUEBA para tu computadora. En el servidor se usa ProduccionSeeder (instalación limpia).
+     */
     public function run(): void
     {
+        if (app()->isProduction()) {
+            $this->command->error('Estos son datos de prueba: en producción usa  php artisan db:seed --class=ProduccionSeeder');
+
+            return;
+        }
+
         // RUC de prueba aceptado por el entorno beta de SUNAT
         Empresa::create([
             'ruc' => '20000000001',
@@ -54,6 +63,14 @@ class DatabaseSeeder extends Seeder
             'rol' => 'admin',
             'sucursal_id' => $sucursal->id,
         ]);
+        // Usuario de soporte (súper administrador) para probar sus permisos en tu computadora
+        User::create([
+            'name' => 'Soporte Perú Labs',
+            'email' => 'soporte@drogueria.test',
+            'password' => 'password',
+            'rol' => 'admin',
+            'sucursal_id' => $sucursal->id,
+        ])->forceFill(['es_superadmin' => true])->save();
         User::create([
             'name' => 'Vendedor Demo',
             'email' => 'vendedor@drogueria.test',

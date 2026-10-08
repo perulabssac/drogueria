@@ -9,9 +9,11 @@ use App\Services\Sunat\CertificadoService;
 use App\Services\Sunat\PruebaSunatService;
 use Illuminate\Http\RedirectResponse;
 use Illuminate\Http\Request;
+use Illuminate\Support\Facades\Storage;
 use Illuminate\Validation\Rule;
 use Inertia\Inertia;
 use Inertia\Response;
+use Symfony\Component\HttpFoundation\BinaryFileResponse;
 
 class ConfiguracionController extends Controller
 {
@@ -32,6 +34,7 @@ class ConfiguracionController extends Controller
                 ...$empresa->toArray(),
                 'tiene_clave_sol' => (bool) $empresa->sol_clave,
             ],
+            'logoUrl' => $empresa->logoUrl(),
             'certificado' => $certificados->informacion($empresa),
             'soapActivo' => extension_loaded('soap'),
             'sucursales' => Sucursal::orderBy('id')->get(['id', 'nombre', 'codigo_establecimiento']),
@@ -68,6 +71,57 @@ class ConfiguracionController extends Controller
         Empresa::actual()->update($datos);
 
         return back()->with('success', 'Datos de la empresa actualizados.');
+    }
+
+    /** Sube o reemplaza el logo de la empresa (se guarda en storage/app/private, fuera de GitHub). */
+    public function subirLogo(Request $request): RedirectResponse
+    {
+        $request->validate([
+            'logo' => ['required', 'image', 'mimes:png,jpg,jpeg', 'max:1024', 'dimensions:min_width=200'],
+        ], [
+            'logo.required' => 'Selecciona la imagen del logo.',
+            'logo.image' => 'El archivo debe ser una imagen.',
+            'logo.mimes' => 'El logo debe ser PNG o JPG.',
+            'logo.max' => 'El logo no debe pesar más de 1 MB.',
+            'logo.dimensions' => 'El logo debe tener al menos 200 px de ancho para que se vea nítido.',
+        ]);
+
+        $empresa = Empresa::actual();
+        $anterior = $empresa->logo_path;
+        $archivo = $request->file('logo');
+
+        // Nombre con fecha: así el navegador no muestra un logo antiguo guardado en caché
+        $ruta = $archivo->storeAs('empresa', 'logo-'.now()->format('YmdHis').'.'.$archivo->extension(), 'local');
+        $empresa->update(['logo_path' => $ruta]);
+
+        if ($anterior && $anterior !== $ruta) {
+            Storage::disk('local')->delete($anterior);
+        }
+
+        return back()->with('success', 'Logo actualizado. Ya aparece en el sistema y en los comprobantes.');
+    }
+
+    public function eliminarLogo(): RedirectResponse
+    {
+        $empresa = Empresa::actual();
+
+        if ($empresa->logo_path) {
+            Storage::disk('local')->delete($empresa->logo_path);
+            $empresa->update(['logo_path' => null]);
+        }
+
+        return back()->with('success', 'Logo eliminado.');
+    }
+
+    /** Muestra el logo. Es público porque también se usa en la pantalla de inicio de sesión. */
+    public function logo(): BinaryFileResponse
+    {
+        $empresa = Empresa::query()->first();
+        abort_unless($empresa?->logo_path && Storage::disk('local')->exists($empresa->logo_path), 404);
+
+        return response()->file(Storage::disk('local')->path($empresa->logo_path), [
+            'Cache-Control' => 'public, max-age=604800',
+        ]);
     }
 
     public function actualizarSunat(Request $request): RedirectResponse
