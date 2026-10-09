@@ -11,7 +11,6 @@ use chillerlan\QRCode\QRCode;
 use chillerlan\QRCode\QROptions;
 use Dompdf\Dompdf;
 use Dompdf\Options;
-use Illuminate\Support\Facades\URL;
 
 /**
  * Genera el PDF (A4) de un comprobante en el servidor: para adjuntarlo al correo
@@ -27,16 +26,22 @@ class ComprobantePdfService
         'NV' => 'NOTA DE VENTA',
     ];
 
-    /** Días que dura el enlace público que se envía al cliente. */
-    public const DIAS_ENLACE = 90;
+    /** Días que el cliente puede abrir su comprobante desde la emisión (SUNAT: al menos 1 año). */
+    public const DIAS_ENLACE = 365;
 
     /**
-     * Enlace público y firmado al PDF: el cliente lo abre sin iniciar sesión.
-     * La firma impide cambiar el número para ver comprobantes de otros clientes.
+     * Enlace público y corto al PDF: el cliente lo abre sin iniciar sesión.
+     * El código aleatorio impide adivinar los comprobantes de otros clientes.
      */
     public function enlacePublico(Comprobante $comprobante): string
     {
-        return URL::temporarySignedRoute('comprobantes.publico', now()->addDays(self::DIAS_ENLACE), ['comprobante' => $comprobante->id]);
+        return route('comprobantes.publico', ['codigo' => $comprobante->codigoPublico()]);
+    }
+
+    /** ¿El enlace público ya venció? (se cuenta desde la fecha de emisión) */
+    public function enlaceVencido(Comprobante $comprobante): bool
+    {
+        return $comprobante->fecha_emision->copy()->startOfDay()->addDays(self::DIAS_ENLACE)->isPast();
     }
 
     /** Contenido binario del PDF. */

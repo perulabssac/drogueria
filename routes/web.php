@@ -36,10 +36,12 @@ Route::middleware('guest')->group(function () {
     Route::post('/login', [AuthController::class, 'store'])->middleware('throttle:10,1');
 });
 
-// Enlace público y firmado al PDF del comprobante (se envía por WhatsApp o correo).
-// No requiere iniciar sesión: sin una firma válida responde 403.
-Route::get('/c/{comprobante}', [ComprobantePublicoController::class, 'pdf'])
-    ->middleware(['signed', 'throttle:30,1'])
+// Enlace público y corto al PDF del comprobante (se envía por WhatsApp o correo): /c/K7mQ2xP9aR
+// No requiere iniciar sesión: el código aleatorio de 10 caracteres es el que da acceso.
+// Máximo 30 por minuto por equipo, para que nadie pruebe códigos al azar.
+Route::get('/c/{codigo}', [ComprobantePublicoController::class, 'pdf'])
+    ->where('codigo', '[A-Za-z0-9]{10}')
+    ->middleware('throttle:30,1')
     ->name('comprobantes.publico');
 
 // Logo de la empresa: público porque se muestra en la pantalla de inicio de sesión

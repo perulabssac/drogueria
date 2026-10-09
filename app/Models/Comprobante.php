@@ -28,6 +28,14 @@ class Comprobante extends Model
     /** Plazo de SUNAT para comunicar la baja (días calendario desde la emisión). */
     public const DIAS_PARA_BAJA = 7;
 
+    /**
+     * Código aleatorio del enlace público corto (vitalispharma.com/c/K7mQ2xP9aR).
+     * Sin letras que se confunden (0/O, 1/l/I): 57^10 combinaciones, imposible de adivinar.
+     */
+    public const LARGO_CODIGO_PUBLICO = 10;
+
+    private const LETRAS_CODIGO = 'ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnpqrstuvwxyz23456789';
+
     // Catálogo 09 - motivos de nota de crédito más usados
     public const MOTIVOS_NC = [
         '01' => 'Anulación de la operación',
@@ -57,6 +65,14 @@ class Comprobante extends Model
 
     // Campos calculados que se envían a Vue junto con el comprobante
     protected $appends = ['numero', 'tipo_nombre'];
+
+    protected static function booted(): void
+    {
+        // Todo comprobante nuevo nace con su código para el enlace público
+        static::creating(function (Comprobante $comprobante) {
+            $comprobante->codigo_publico ??= self::nuevoCodigoPublico();
+        });
+    }
 
     protected function casts(): array
     {
@@ -152,6 +168,29 @@ class Comprobante extends Model
     public function bajaUsuario(): BelongsTo
     {
         return $this->belongsTo(User::class, 'baja_user_id');
+    }
+
+    /** Genera un código aleatorio que ningún otro comprobante tenga. */
+    public static function nuevoCodigoPublico(): string
+    {
+        do {
+            $codigo = '';
+            for ($i = 0; $i < self::LARGO_CODIGO_PUBLICO; $i++) {
+                $codigo .= self::LETRAS_CODIGO[random_int(0, strlen(self::LETRAS_CODIGO) - 1)];
+            }
+        } while (static::query()->where('codigo_publico', $codigo)->exists());
+
+        return $codigo;
+    }
+
+    /** Código del enlace público (si por algún motivo no lo tiene, se le asigna uno). */
+    public function codigoPublico(): string
+    {
+        if (! $this->codigo_publico) {
+            $this->forceFill(['codigo_publico' => self::nuevoCodigoPublico()])->saveQuietly();
+        }
+
+        return $this->codigo_publico;
     }
 
     public function getNumeroAttribute(): string
