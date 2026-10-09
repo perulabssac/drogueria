@@ -2,11 +2,13 @@
 
 namespace App\Services;
 
+use App\Models\Empresa;
 use App\Models\Importacion;
 use App\Models\Laboratorio;
 use App\Models\Lote;
 use App\Models\Producto;
 use App\Models\User;
+use App\Support\Precios;
 use Carbon\Carbon;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Validation\ValidationException;
@@ -30,7 +32,10 @@ class ImportacionService
     /** Máximo de filas por archivo (para no colgar el servidor). */
     public const MAX_FILAS = 3000;
 
-    /** clave => [encabezado, ejemplo 1, ejemplo 2, ancho]. El * marca las obligatorias. */
+    /**
+     * clave => [encabezado, ejemplo 1, ejemplo 2, ancho]. El * marca las obligatorias.
+     * Precio: se indica el margen % (el precio se calcula con el costo) o el precio de venta.
+     */
     public const COLUMNAS = [
         'codigo' => ['Código*', 'AMOX500', 'IBU400SUS', 12],
         'nombre' => ['Nombre*', 'AMOXICILINA', 'IBUPROFENO', 28],
@@ -43,17 +48,18 @@ class ImportacionService
         'registro_sanitario' => ['Registro sanitario', 'EN-01234', 'EE-05678', 14],
         'codigo_barras' => ['Código de barras', '7750000000017', '', 16],
         'unidad_venta' => ['Unidad de venta*', 'CJA', 'FCO', 10],
-        'precio_venta' => ['Precio venta*', 25, 12.5, 10],
+        'costo' => ['Costo sin IGV (por presentación)', 18.5, 8.2, 14],
+        'margen' => ['Margen %', 35, '', 9],
+        'precio_venta' => ['Precio venta (con IGV)', '', 12.5, 11],
         'fraccionable' => ['¿Se vende suelto?', 'SI', 'NO', 10],
         'unidades_por_presentacion' => ['Unidades por presentación', 100, '', 12],
         'unidad_fraccion' => ['Unidad suelta', 'CAP', '', 10],
-        'precio_fraccion' => ['Precio unidad suelta', 0.3, '', 11],
+        'precio_fraccion' => ['Precio unidad suelta', '', '', 11],
         'igv' => ['IGV', 'GRAVADO', 'EXONERADO', 12],
         'condicion_venta' => ['Condición de venta', 'CON RECETA', 'LIBRE', 16],
         'controlado' => ['¿Controlado?', 'NO', 'NO', 10],
         'cadena_frio' => ['¿Cadena de frío?', 'NO', 'NO', 10],
         'stock_minimo' => ['Stock mínimo', 5, 10, 9],
-        'costo' => ['Costo sin IGV (por presentación)', 18.5, 8.2, 14],
         'lote' => ['N° lote', 'L2401', 'B5566', 10],
         'vencimiento' => ['Vencimiento (dd/mm/aaaa)', '31/12/2027', '30/06/2027', 14],
         'cantidad' => ['Cantidad (presentaciones)', 10, 24, 12],
@@ -63,6 +69,11 @@ class ImportacionService
     private const IGV = ['GRAVADO' => '10', 'EXONERADO' => '20', 'INAFECTO' => '30'];
 
     private const CONDICIONES = ['LIBRE' => 'sin_receta', 'CON RECETA' => 'con_receta', 'RECETA RETENIDA' => 'receta_retenida'];
+
+    /** Margen máximo aceptado en el Excel (para detectar errores de digitación). */
+    public const MARGEN_MAXIMO = 500;
+
+    private ?Empresa $empresa = null;
 
     public function __construct(private InventarioService $inventario) {}
 
@@ -139,6 +150,8 @@ class ImportacionService
             ['• Si solo quieres registrar el producto (sin stock), deja vacías las columnas de lote, vencimiento y cantidad.'],
             ['• Cantidad: en presentaciones enteras (cajas, frascos...). Si es fraccionable, las tabletas sueltas van en "Unidades sueltas".'],
             ['• Costo: por presentación y SIN IGV. Se usa para valorizar el inventario y calcular la utilidad.'],
+            ['• Precio: escribe el MARGEN % (el sistema calcula el precio de venta con el costo, igual que en el formulario de productos) o escribe el PRECIO de venta con IGV. Si pones ambos, se respeta el precio escrito.'],
+            ['• Si el producto se vende suelto y pones margen, el precio de la unidad suelta también se calcula solo (puedes escribirlo si prefieres otro).'],
             ['• Vencimiento: en formato dd/mm/aaaa (ej. 31/12/2027). No se importan lotes vencidos.'],
             ['• Si el código ya existe en el sistema, solo se agrega el stock (y se actualizan los datos si marcas esa opción al importar).'],
             ['• Valores permitidos — Unidad de venta: '.implode(', ', array_keys(Producto::UNIDADES_VENTA)).
@@ -152,10 +165,10 @@ class ImportacionService
             $hoja->setCellValue('A'.($i + 1), $linea[0]);
         }
         $hoja->getStyle('A1')->getFont()->setBold(true)->setSize(13);
-        $hoja->getStyle('A10')->getFont()->setBold(true);
+        $hoja->getStyle('A'.count($lineas))->getFont()->setBold(true);
 
         // Encabezados y 2 filas de ejemplo
-        $fila = 11;
+        $fila = count($lineas) + 1;
         foreach ($claves as $i => $clave) {
             $columna = Coordinate::stringFromColumnIndex($i + 1);
             $hoja->setCellValue("{$columna}{$fila}", self::COLUMNAS[$clave][0]);
@@ -198,10 +211,11 @@ class ImportacionService
             if ($codigo === '') {
                 $errores[] = 'Falta el código.';
             } elseif (! isset($productos[$codigo])) {
-                [$datos, $erroresProducto] = $this->datosProducto($f, $existente, $actualizarExistentes);
+                [$datos, $erroresProducto, $avisosProducto] = $this->datosProducto($f, $existente, $actualizarExistentes);
                 // Un producto que ya existe y no se va a actualizar solo recibe stock: sus datos del Excel no importan
                 if (! $existente || $actualizarExistentes) {
                     $errores = [...$errores, ...$erroresProducto];
+                    $avisos = [...$avisos, ...$avisosProducto];
                 }
                 $productos[$codigo] = $datos;
             }
@@ -235,6 +249,11 @@ class ImportacionService
                 $avisos[] = 'Producto ya registrado y sin lote: esta fila no agrega nada (salvo que actualices datos).';
             }
 
+            // Precio y margen con los que quedará el producto (para revisarlos en la vista previa)
+            $soloStock = $existente && ! $actualizarExistentes;
+            $precio = $soloStock ? (float) $existente->precio_venta : ($producto['precio_venta'] ?? null);
+            $margen = $soloStock ? $existente->margen : ($producto['margen'] ?? null);
+
             $resultado[] = [
                 'fila' => $f['fila'],
                 'codigo' => $codigo,
@@ -242,6 +261,9 @@ class ImportacionService
                     ? trim($existente->nombre.' '.$existente->concentracion)
                     : trim(($producto['nombre'] ?? $f['nombre']).' '.($producto['concentracion'] ?? '')),
                 'estado' => $existente ? 'existente' : 'nuevo',
+                'precio' => $precio !== null ? round((float) $precio, 2) : null,
+                'margen' => $margen !== null ? round((float) $margen, 2) : null,
+                'precio_calculado' => ! $soloStock && ($producto['_precio_calculado'] ?? false),
                 'lote' => $lote['numero_lote'] ?? null,
                 'vencimiento' => $lote['fecha_vencimiento'] ?? null,
                 'cantidad' => $lote ? $this->textoCantidad($lote['cantidad'], $factor, $unidades) : null,
@@ -316,10 +338,11 @@ class ImportacionService
         return $filas;
     }
 
-    /** @return array{0: array, 1: array<int, string>} datos del producto y errores */
+    /** @return array{0: array, 1: array<int, string>, 2: array<int, string>} datos del producto, errores y avisos */
     private function datosProducto(array $f, ?Producto $existente, bool $actualizar): array
     {
         $errores = [];
+        $avisos = [];
         $texto = fn ($v, $max = 255) => mb_substr(mb_strtoupper(trim((string) $v)), 0, $max) ?: null;
         $siNo = fn ($v) => in_array(mb_strtoupper(trim((string) $v)), ['SI', 'SÍ', 'S', '1', 'X'], true);
 
@@ -352,7 +375,15 @@ class ImportacionService
             'cadena_frio' => $siNo($f['cadena_frio']),
             'stock_minimo' => (int) ($this->numero($f['stock_minimo']) ?? 0),
             'costo' => $this->numero($f['costo']) ?? 0,
+            'margen' => $this->porcentaje($f['margen']),
         ];
+
+        $calculado = false;
+        if ($datos['tipo_afectacion_igv'] && isset(Producto::UNIDADES_VENTA[$unidad])) {
+            [$calculado, $erroresPrecio, $avisosPrecio] = $this->aplicarMargen($datos);
+            $errores = [...$errores, ...$erroresPrecio];
+            $avisos = [...$avisos, ...$avisosPrecio];
+        }
 
         if (! $datos['nombre']) {
             $errores[] = 'Falta el nombre.';
@@ -361,7 +392,7 @@ class ImportacionService
             $errores[] = 'Unidad de venta no válida ('.($unidad ?: 'vacía').').';
         }
         if (! $datos['precio_venta'] || $datos['precio_venta'] <= 0) {
-            $errores[] = 'Falta el precio de venta.';
+            $errores[] = 'Falta el precio de venta o el margen %.';
         }
         if (! $datos['tipo_afectacion_igv']) {
             $errores[] = "IGV no válido ({$igv}): usa GRAVADO, EXONERADO o INAFECTO.";
@@ -377,14 +408,115 @@ class ImportacionService
                 $errores[] = 'Unidad suelta no válida.';
             }
             if (! $datos['precio_fraccion'] || $datos['precio_fraccion'] <= 0) {
-                $errores[] = 'Falta el precio de la unidad suelta.';
+                $errores[] = 'Falta el precio de la unidad suelta (o indica el margen %).';
             }
         }
         if ($actualizar && $existente && $existente->lotes()->exists() && $existente->factor() !== ($fraccionable ? $datos['unidades_por_presentacion'] : 1)) {
             $errores[] = "El producto ya existe con {$existente->factor()} unidad(es) por presentación y tiene lotes: no se puede cambiar.";
         }
 
-        return [$datos, $errores];
+        // Marca interna para la vista previa (no es un campo del producto)
+        $datos['_precio_calculado'] = $calculado;
+
+        return [$datos, $errores, $avisos];
+    }
+
+    /**
+     * Completa el precio con el margen (o el margen con el precio), con las mismas reglas del formulario:
+     *  - margen sin precio  → calcula el precio con el costo y el redondeo de la empresa
+     *  - precio sin margen  → guarda el margen real de ese precio
+     *  - margen y precio    → manda el precio escrito; avisa si no coincide con el margen
+     *
+     * @return array{0: bool, 1: array<int, string>, 2: array<int, string>} ¿precio calculado?, errores y avisos
+     */
+    private function aplicarMargen(array &$datos): array
+    {
+        $errores = [];
+        $avisos = [];
+        $margen = $datos['margen'];
+        $costo = (float) $datos['costo'];
+        $calculado = false;
+
+        if ($margen === null) {
+            // Solo precio: se guarda su margen real (si deja ganancia)
+            if ($datos['precio_venta'] && $costo > 0) {
+                $real = $this->margenReal($datos['precio_venta'], $costo, $datos['tipo_afectacion_igv']);
+                if ($real > 0) {
+                    $datos['margen'] = $real;
+                } else {
+                    $avisos[] = 'El precio de venta no deja ganancia sobre el costo.';
+                }
+            }
+
+            return [false, $errores, $avisos];
+        }
+
+        if ($margen < 0 || $margen > self::MARGEN_MAXIMO) {
+            $errores[] = 'Margen no válido: debe estar entre 0 y '.self::MARGEN_MAXIMO.' %.';
+            $datos['margen'] = null;
+
+            return [false, $errores, $avisos];
+        }
+        if ($costo <= 0) {
+            $errores[] = 'Para calcular el precio con el margen, indica el costo.';
+
+            return [false, $errores, $avisos];
+        }
+
+        // Producto temporal (no se guarda) para usar el mismo cálculo que compras y el formulario
+        $sugerido = Precios::sugeridosProducto((new Producto())->forceFill(array_diff_key($datos, ['laboratorio' => 1])), null, $this->empresa());
+        if (! $sugerido || $sugerido['precio_venta'] <= 0) {
+            return [false, $errores, $avisos];
+        }
+
+        if (! $datos['precio_venta']) {
+            $datos['precio_venta'] = $sugerido['precio_venta'];
+            $calculado = true;
+        } elseif (abs($datos['precio_venta'] - $sugerido['precio_venta']) >= 0.005) {
+            $avisos[] = 'Con '.$this->texto2($margen).' % el precio sería S/ '.number_format($sugerido['precio_venta'], 2)
+                .': se usará el precio escrito (S/ '.number_format($datos['precio_venta'], 2).').';
+        }
+
+        if ($datos['fraccionable'] && ! $datos['precio_fraccion'] && ($sugerido['precio_fraccion'] ?? 0) > 0) {
+            $datos['precio_fraccion'] = $sugerido['precio_fraccion'];
+        }
+
+        return [$calculado, $errores, $avisos];
+    }
+
+    /** Margen sobre el costo de un precio con IGV, truncado a 2 decimales (al recalcular sale el mismo precio). */
+    private function margenReal(float $precio, float $costo, string $afectacion): float
+    {
+        $sinIgv = $afectacion === '10' ? $precio / 1.18 : $precio;
+
+        return floor(round(($sinIgv / $costo - 1) * 10000, 6)) / 100;
+    }
+
+    private function empresa(): Empresa
+    {
+        return $this->empresa ??= Empresa::actual();
+    }
+
+    private function texto2(float $n): string
+    {
+        return rtrim(rtrim(number_format($n, 2, '.', ''), '0'), '.');
+    }
+
+    /** "40", "40%", "40 %", 40 → 40. Una celda con formato de porcentaje en Excel llega como 0.4 → 40. */
+    private function porcentaje(mixed $valor): ?float
+    {
+        if (is_string($valor)) {
+            $valor = str_replace('%', '', $valor);
+        }
+        $numero = $this->numero($valor);
+        if ($numero === null) {
+            return null;
+        }
+        if ($numero > 0 && $numero < 1) {
+            $numero *= 100;
+        }
+
+        return round($numero, 2);
     }
 
     /** @return array{0: ?array, 1: array<int, string>, 2: array<int, string>} lote, errores y avisos */
@@ -564,6 +696,7 @@ class ImportacionService
     /** Cambia el nombre del laboratorio por su id (lo crea si no existe). */
     private function conLaboratorio(array $datos): array
     {
+        unset($datos['_precio_calculado']);
         $datos['laboratorio_id'] = $datos['laboratorio']
             ? Laboratorio::firstOrCreate(['nombre' => $datos['laboratorio']])->id
             : null;

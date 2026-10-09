@@ -80,6 +80,7 @@ const cancelar = () => router.post('/importar/cancelar', {}, { preserveScroll: t
                     <li>Una fila por cada <b>lote</b>.</li>
                     <li>Cantidad en presentaciones; las sueltas, aparte.</li>
                     <li>Costo por presentación, sin IGV.</li>
+                    <li><b>Margen %</b> (el precio se calcula solo) o el precio de venta.</li>
                     <li>Máximo {{ maxFilas }} filas por archivo.</li>
                 </ul>
             </div>
@@ -168,6 +169,19 @@ const cancelar = () => router.post('/importar/cancelar', {}, { preserveScroll: t
                         <template #body="{ data }">
                             {{ data.nombre }}
                             <Tag :value="data.estado === 'nuevo' ? 'Nuevo' : 'Ya existe'" :severity="data.estado === 'nuevo' ? 'success' : 'info'" class="ml-1" />
+                        </template>
+                    </Column>
+                    <Column header="Precio venta" class="text-right">
+                        <template #body="{ data }">
+                            <template v-if="data.precio">
+                                <span class="font-medium">{{ soles(data.precio) }}</span>
+                                <p class="text-xs" :class="data.precio_calculado ? 'text-violet-700' : 'text-slate-500'">
+                                    <template v-if="data.margen !== null">margen {{ data.margen }} %</template>
+                                    <template v-else>sin margen</template>
+                                    <span v-if="data.precio_calculado"> · calculado</span>
+                                </p>
+                            </template>
+                            <span v-else>—</span>
                         </template>
                     </Column>
                     <Column header="Lote"><template #body="{ data }">{{ data.lote ?? '—' }}</template></Column>
