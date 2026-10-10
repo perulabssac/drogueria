@@ -53,6 +53,9 @@
                         <div class="negrita">{{ $e->razon_social }}</div>
                     @endif
                 @endif
+                @if ($e->giro)
+                    <div style="font-style: italic; color: #334155; margin-bottom: 2px;">{{ $e->giro }}</div>
+                @endif
                 <div>{{ $direccionEmpresa }}</div>
                 @if ($c->sucursal && $c->sucursal->direccion && $c->sucursal->direccion !== $e->direccion)
                     <div>Establecimiento: {{ $c->sucursal->direccion }}</div>

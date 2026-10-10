@@ -118,7 +118,7 @@ class CotizacionController extends Controller
 
         return Inertia::render('Cotizaciones/Imprimir', [
             'cotizacion' => $cotizacion,
-            'empresa' => Empresa::actual()->only('ruc', 'razon_social', 'nombre_comercial', 'direccion', 'telefono', 'email'),
+            'empresa' => Empresa::actual()->only('ruc', 'razon_social', 'nombre_comercial', 'giro', 'direccion', 'telefono', 'email'),
         ]);
     }
 

@@ -84,7 +84,7 @@ class ComprobanteController extends Controller
         return Inertia::render('Comprobantes/Imprimir', [
             'comprobante' => $comprobante,
             'empresa' => $empresa->only([
-                'ruc', 'razon_social', 'nombre_comercial', 'direccion', 'distrito', 'provincia', 'departamento',
+                'ruc', 'razon_social', 'nombre_comercial', 'giro', 'direccion', 'distrito', 'provincia', 'departamento',
                 'telefono', 'email', 'cuentas_bancarias',
             ]),
             'formato' => $request->query('formato') === 'ticket' ? 'ticket' : 'a4',

@@ -200,7 +200,10 @@ class Comprobante extends Model
 
     public function getTipoNombreAttribute(): string
     {
-        return self::TIPOS[$this->tipo_comprobante] ?? $this->tipo_comprobante;
+        // Si el comprobante se cargó sin la columna tipo_comprobante, devuelve vacío en vez de fallar
+        $tipo = (string) $this->tipo_comprobante;
+
+        return self::TIPOS[$tipo] ?? $tipo;
     }
 
     public function esNota(): bool

@@ -41,6 +41,7 @@ const formEmpresa = useForm({
     ruc: props.empresa.ruc,
     razon_social: props.empresa.razon_social,
     nombre_comercial: props.empresa.nombre_comercial ?? '',
+    giro: props.empresa.giro ?? '',
     direccion: props.empresa.direccion,
     ubigeo: props.empresa.ubigeo,
     departamento: props.empresa.departamento,
@@ -213,6 +214,18 @@ const guardarSerie = () => formSerie.post('/configuracion/series', { preserveScr
                             <div class="flex flex-col gap-1">
                                 <label class="text-sm">Nombre comercial</label>
                                 <InputText v-model="formEmpresa.nombre_comercial" />
+                            </div>
+
+                            <div class="sm:col-span-2 xl:col-span-4 flex flex-col gap-1">
+                                <label class="text-sm">Giro del negocio</label>
+                                <InputText
+                                    v-model="formEmpresa.giro"
+                                    maxlength="150"
+                                    placeholder="Ej.: Distribuidor de medicamentos, material y dispositivos médicos"
+                                    :invalid="!!formEmpresa.errors.giro"
+                                />
+                                <small v-if="formEmpresa.errors.giro" class="text-red-600">{{ formEmpresa.errors.giro }}</small>
+                                <small v-else class="text-slate-500">Sale debajo de la razón social en facturas, boletas y cotizaciones. Opcional.</small>
                             </div>
 
                             <div class="sm:col-span-2 flex flex-col gap-1">

@@ -51,6 +51,7 @@ class ConfiguracionController extends Controller
             'ruc' => ['required', 'digits:11'],
             'razon_social' => ['required', 'string', 'max:255'],
             'nombre_comercial' => ['nullable', 'string', 'max:255'],
+            'giro' => ['nullable', 'string', 'max:150'],
             'direccion' => ['required', 'string', 'max:255'],
             'ubigeo' => ['required', 'digits:6'],
             'departamento' => ['required', 'string', 'max:100'],
@@ -67,6 +68,9 @@ class ConfiguracionController extends Controller
                 $datos[$campo] = mb_strtoupper(trim($datos[$campo]));
             }
         }
+
+        // El giro se guarda tal como se escribe (mayúsculas y minúsculas), sin espacios de más
+        $datos['giro'] = isset($datos['giro']) ? (preg_replace('/\s+/', ' ', trim($datos['giro'])) ?: null) : null;
 
         Empresa::actual()->update($datos);
 

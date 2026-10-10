@@ -42,6 +42,7 @@ onUnmounted(() => estiloPagina?.remove());
             <div>
                 <p class="text-base font-bold">{{ empresa.razon_social }}</p>
                 <p v-if="empresa.nombre_comercial && empresa.nombre_comercial !== empresa.razon_social">{{ empresa.nombre_comercial }}</p>
+                <p v-if="empresa.giro" class="italic text-slate-700">{{ empresa.giro }}</p>
                 <p>{{ empresa.direccion }}</p>
                 <p v-if="empresa.telefono || empresa.email">{{ [empresa.telefono, empresa.email].filter(Boolean).join(' · ') }}</p>
             </div>

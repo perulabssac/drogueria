@@ -8,7 +8,7 @@ use Illuminate\Support\Facades\Storage;
 class Empresa extends Model
 {
     protected $fillable = [
-        'ruc', 'razon_social', 'nombre_comercial', 'direccion', 'ubigeo', 'departamento',
+        'ruc', 'razon_social', 'nombre_comercial', 'giro', 'direccion', 'ubigeo', 'departamento',
         'provincia', 'distrito', 'urbanizacion', 'telefono', 'email', 'cuentas_bancarias', 'entorno',
         'sol_usuario', 'sol_clave', 'certificado_path', 'certificado_vence',
         'redondeo_precio', 'logo_path',

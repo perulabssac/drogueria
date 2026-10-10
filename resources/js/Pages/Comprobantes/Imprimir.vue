@@ -125,6 +125,7 @@ const cerrar = () => (window.opener ? window.close() : window.location.assign(`/
                 <div class="flex-1">
                     <h1 class="text-lg font-bold">{{ e.nombre_comercial || e.razon_social }}</h1>
                     <p v-if="e.nombre_comercial" class="font-semibold">{{ e.razon_social }}</p>
+                    <p v-if="e.giro" class="italic text-slate-700">{{ e.giro }}</p>
                     <p>{{ direccionEmpresa }}</p>
                     <p v-if="c.sucursal && c.sucursal.direccion !== e.direccion">Establecimiento: {{ c.sucursal.direccion }}</p>
                     <p v-if="e.telefono || e.email">
@@ -262,6 +263,7 @@ const cerrar = () => (window.opener ? window.close() : window.location.assign(`/
             <div class="text-center">
                 <p class="font-bold" :class="es58 ? 'text-[11px]' : 'text-[13px]'">{{ e.nombre_comercial || e.razon_social }}</p>
                 <p v-if="e.nombre_comercial">{{ e.razon_social }}</p>
+                <p v-if="e.giro" class="font-normal">{{ e.giro }}</p>
                 <p>RUC {{ e.ruc }}</p>
                 <p>{{ direccionEmpresa }}</p>
                 <p v-if="e.telefono">Telf.: {{ e.telefono }}</p>
