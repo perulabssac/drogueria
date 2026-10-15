@@ -108,6 +108,9 @@ Route::middleware('auth')->group(function () {
         Route::post('/productos', [ProductoController::class, 'store'])->name('productos.store');
         Route::get('/productos/{producto}/editar', [ProductoController::class, 'edit'])->name('productos.edit');
         Route::put('/productos/{producto}', [ProductoController::class, 'update'])->name('productos.update');
+        Route::post('/productos/{producto}/desactivar', [ProductoController::class, 'desactivar'])->name('productos.desactivar');
+        Route::post('/productos/{producto}/activar', [ProductoController::class, 'activar'])->name('productos.activar');
+        // Eliminar: solo productos sin historial (creados o importados por error)
         Route::delete('/productos/{producto}', [ProductoController::class, 'destroy'])->name('productos.destroy');
 
         Route::get('/proveedores', [ProveedorController::class, 'index'])->name('proveedores.index');
@@ -117,9 +120,12 @@ Route::middleware('auth')->group(function () {
         Route::put('/proveedores/{proveedor}', [ProveedorController::class, 'update'])->name('proveedores.update');
         Route::get('/api/proveedores/buscar', [ProveedorController::class, 'buscar']);
 
-        // Registrar y anular compras (el contador solo las ve)
+        // Registrar, corregir, anular y eliminar compras (el contador solo las ve)
         Route::get('/compras/nueva', [CompraController::class, 'create'])->name('compras.create');
         Route::post('/compras', [CompraController::class, 'store'])->name('compras.store');
+        Route::get('/compras/{compra}/editar', [CompraController::class, 'edit'])->name('compras.edit');
+        Route::put('/compras/{compra}', [CompraController::class, 'update'])->name('compras.update');
+        Route::delete('/compras/{compra}', [CompraController::class, 'destroy'])->name('compras.destroy');
         Route::post('/compras/{compra}/anular', [CompraController::class, 'anular'])->name('compras.anular');
         Route::post('/compras/{compra}/precios', [CompraController::class, 'actualizarPrecios'])->name('compras.precios');
 
@@ -263,4 +269,4 @@ Route::middleware('auth')->group(function () {
         Route::post('/probar-sunat', [ConfiguracionController::class, 'probarSunat'])->middleware('throttle:10,1');
         Route::post('/series', [ConfiguracionController::class, 'guardarSerie']);
     });
-});
+});

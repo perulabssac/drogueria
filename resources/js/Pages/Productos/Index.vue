@@ -49,12 +49,28 @@ watch([laboratorioId, categoria], () => recargar());
 
 const cambiarPagina = (e) => recargar({ page: e.page + 1, por_pagina: e.rows });
 
+const nombreProducto = (p) => `${p.nombre} ${p.concentracion ?? ''}`.trim();
+
 const desactivar = (p) => {
     confirm.require({
         header: 'Desactivar producto',
-        message: `¿Desactivar "${p.nombre} ${p.concentracion ?? ''}"? Ya no aparecerá para la venta, pero se conserva su historial.`,
+        message: `¿Desactivar "${nombreProducto(p)}"? Ya no aparecerá para la venta, pero se conserva su historial. Puedes activarlo cuando quieras.`,
         icon: 'pi pi-exclamation-triangle',
-        acceptProps: { label: 'Desactivar', severity: 'danger' },
+        acceptProps: { label: 'Desactivar', severity: 'warn' },
+        rejectProps: { label: 'Cancelar', severity: 'secondary', outlined: true },
+        accept: () => router.post(`/productos/${p.id}/desactivar`, {}, { preserveScroll: true }),
+    });
+};
+
+const activar = (p) => router.post(`/productos/${p.id}/activar`, {}, { preserveScroll: true });
+
+// Solo se borra si no tiene historial; si lo tiene, el sistema avisa y sugiere desactivarlo
+const eliminar = (p) => {
+    confirm.require({
+        header: 'Eliminar producto',
+        message: `¿Eliminar definitivamente "${nombreProducto(p)}"? Solo es posible si nunca se compró, vendió ni cotizó; su stock inicial también se borrará. Esta acción no se puede deshacer.`,
+        icon: 'pi pi-trash',
+        acceptProps: { label: 'Eliminar', severity: 'danger' },
         rejectProps: { label: 'Cancelar', severity: 'secondary', outlined: true },
         accept: () => router.delete(`/productos/${p.id}`, { preserveScroll: true }),
     });
@@ -138,12 +154,14 @@ const stockBajo = (p) => {
                 <Column class="text-right whitespace-nowrap">
                     <template #body="{ data }">
                         <Link :href="`/productos/${data.id}/editar`">
-                            <Button icon="pi pi-pencil" text rounded v-tooltip.top="'Editar'" />
+                            <Button icon="pi pi-pencil" text rounded severity="info" v-tooltip.top="'Editar'" />
                         </Link>
-                        <Button v-if="data.activo" icon="pi pi-ban" text rounded severity="danger" v-tooltip.top="'Desactivar'" @click="desactivar(data)" />
+                        <Button v-if="data.activo" icon="pi pi-ban" text rounded severity="warn" v-tooltip.top="'Desactivar'" @click="desactivar(data)" />
+                        <Button v-else icon="pi pi-check-circle" text rounded severity="success" v-tooltip.top="'Activar'" @click="activar(data)" />
+                        <Button icon="pi pi-trash" text rounded severity="danger" v-tooltip.top="'Eliminar'" @click="eliminar(data)" />
                     </template>
                 </Column>
             </DataTable>
         </div>
     </AppLayout>
-</template>
+</template>

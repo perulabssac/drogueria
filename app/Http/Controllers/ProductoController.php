@@ -2,14 +2,18 @@
 
 namespace App\Http\Controllers;
 
-use App\Models\Laboratorio;
-use App\Models\Producto;
 use App\Models\Empresa;
+use App\Models\Laboratorio;
+use App\Models\Lote;
+use App\Models\MovimientoInventario;
+use App\Models\Producto;
 use App\Support\Precios;
 use App\Support\ProductoVenta;
+use Illuminate\Database\QueryException;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\RedirectResponse;
 use Illuminate\Http\Request;
+use Illuminate\Support\Facades\DB;
 use Illuminate\Validation\Rule;
 use Illuminate\Validation\ValidationException;
 use Inertia\Inertia;
@@ -83,12 +87,44 @@ class ProductoController extends Controller
         return redirect('/productos')->with('success', "Producto {$producto->nombre} actualizado.");
     }
 
-    /** No se borra (tiene historial de ventas y kárdex): solo se desactiva. */
-    public function destroy(Producto $producto): RedirectResponse
+    /** Lo oculta de ventas y búsquedas, pero conserva su historial. */
+    public function desactivar(Producto $producto): RedirectResponse
     {
         $producto->update(['activo' => false]);
 
-        return back()->with('success', 'Producto desactivado.');
+        return back()->with('success', "Producto {$producto->nombre} desactivado.");
+    }
+
+    public function activar(Producto $producto): RedirectResponse
+    {
+        $producto->update(['activo' => true]);
+
+        return back()->with('success', "Producto {$producto->nombre} activado.");
+    }
+
+    /**
+     * Elimina definitivamente un producto SIN historial (creado o importado por error).
+     * Si ya tiene compras, ventas o kárdex, no se borra: se sugiere desactivarlo.
+     */
+    public function destroy(Producto $producto): RedirectResponse
+    {
+        $motivos = $producto->motivosParaNoEliminar();
+        if ($motivos) {
+            return back()->with('error', "No se puede eliminar {$producto->nombre}: tiene ".implode(', ', $motivos).'. Desactívalo para que ya no aparezca en ventas.');
+        }
+
+        try {
+            DB::transaction(function () use ($producto) {
+                // Solo puede tener el stock inicial: se borra junto con el producto
+                MovimientoInventario::where('producto_id', $producto->id)->delete();
+                Lote::where('producto_id', $producto->id)->delete();
+                $producto->delete();
+            });
+        } catch (QueryException) {
+            return back()->with('error', "No se puede eliminar {$producto->nombre}: está relacionado con otros registros. Desactívalo para que ya no aparezca en ventas.");
+        }
+
+        return back()->with('success', "Producto {$producto->nombre} eliminado.");
     }
 
     /**
@@ -191,4 +227,4 @@ class ProductoController extends Controller
 
         return $datos;
     }
-}
+}

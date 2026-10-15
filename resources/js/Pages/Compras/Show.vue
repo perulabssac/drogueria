@@ -12,6 +12,9 @@ import { soles, precio, fecha, cantidad } from '@/utils/formato';
 const props = defineProps({
     compra: Object,
     tiposDocumento: Object,
+    puedeEditar: Boolean,
+    puedeEliminar: Boolean,
+    motivoNoEliminar: { type: String, default: null },
     puedeActualizarPrecios: Boolean,
     preciosSugeridos: { type: Array, default: () => [] },
     sinMargen: { type: Array, default: () => [] },
@@ -37,6 +40,18 @@ const anular = () => {
         acceptProps: { label: 'Anular', severity: 'danger' },
         rejectProps: { label: 'Cancelar', severity: 'secondary', outlined: true },
         accept: () => router.post(`/compras/${props.compra.id}/anular`, {}, { preserveScroll: true }),
+    });
+};
+
+// Eliminar: solo compras registradas por error (sin pagos y con lotes que nadie más usó)
+const eliminar = () => {
+    confirm.require({
+        header: 'Eliminar compra',
+        message: `Se borrará definitivamente la compra ${props.compra.documento}, sus lotes y sus movimientos en el kárdex. Úsalo solo para compras registradas por error. Esta acción no se puede deshacer. ¿Continuar?`,
+        icon: 'pi pi-trash',
+        acceptProps: { label: 'Eliminar', severity: 'danger' },
+        rejectProps: { label: 'Cancelar', severity: 'secondary', outlined: true },
+        accept: () => router.delete(`/compras/${props.compra.id}`),
     });
 };
 
@@ -76,7 +91,21 @@ const actualizarPrecios = () => {
             <Link href="/compras"><Button label="Volver" icon="pi pi-arrow-left" text /></Link>
             <Tag v-if="anulada" value="ANULADA" severity="danger" />
             <Tag v-else-if="conDeuda" :value="ESTADO_PAGO[compra.estado_pago][0]" :severity="ESTADO_PAGO[compra.estado_pago][1]" />
-            <Button v-if="!anulada && !soloLectura" label="Anular compra" icon="pi pi-times" severity="danger" outlined class="ml-auto" @click="anular" />
+            <div v-if="!soloLectura" class="ml-auto flex flex-wrap gap-2">
+                <Link v-if="puedeEditar" :href="`/compras/${compra.id}/editar`">
+                    <Button label="Editar" icon="pi pi-pencil" severity="info" />
+                </Link>
+                <Button v-if="!anulada" label="Anular" icon="pi pi-times" severity="warn" outlined @click="anular" />
+                <!-- Solo aparece si se puede borrar sin descuadrar el stock; si no, se usa Anular -->
+                <Button
+                    v-if="puedeEliminar"
+                    label="Eliminar"
+                    icon="pi pi-trash"
+                    severity="danger"
+                    v-tooltip.bottom="'Borrar definitivamente (compra registrada por error)'"
+                    @click="eliminar"
+                />
+            </div>
         </div>
 
         <!-- Errores de negocio (ej. no se puede anular) -->
@@ -249,4 +278,4 @@ const actualizarPrecios = () => {
             </div>
         </section>
     </AppLayout>
-</template>
+</template>

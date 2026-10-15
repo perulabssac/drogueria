@@ -20,6 +20,7 @@ class MovimientoInventario extends Model
         'rechazo_sunat' => 'Reversión (comprobante rechazado por SUNAT)',
         'baja_sunat' => 'Reversión (comunicación de baja aceptada)',
         'anulacion_compra' => 'Anulación de compra',
+        'edicion_compra' => 'Corrección de compra',
         'ajuste' => 'Ajuste de inventario',
     ];
 

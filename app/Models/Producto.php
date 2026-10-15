@@ -6,6 +6,7 @@ use Illuminate\Database\Eloquent\Builder;
 use Illuminate\Database\Eloquent\Model;
 use Illuminate\Database\Eloquent\Relations\BelongsTo;
 use Illuminate\Database\Eloquent\Relations\HasMany;
+use Illuminate\Support\Facades\DB;
 
 class Producto extends Model
 {
@@ -108,6 +109,83 @@ class Producto extends Model
         return self::UNIDADES_VENTA[$unidadVenta]['sunat'] ?? 'NIU';
     }
 
+    /**
+     * Razones por las que el producto NO se puede eliminar (vacío = se puede).
+     * Se permite eliminar si nunca se compró, vendió, cotizó ni movió: como mucho
+     * tiene el stock inicial cargado a mano o desde Excel, que se borra con él.
+     *
+     * @return array<int, string>
+     */
+    public function motivosParaNoEliminar(): array
+    {
+        $etiquetas = [
+            'compra_items' => 'compras',
+            'comprobante_items' => 'ventas',
+            'comprobante_detalles' => 'ventas',
+            'cotizacion_items' => 'cotizaciones',
+            'guia_items' => 'guías de remisión',
+            'ajuste_items' => 'ajustes de inventario',
+            'toma_items' => 'tomas de inventario',
+            'toma_inventario_items' => 'tomas de inventario',
+        ];
+        $nombre = fn (string $tabla) => $etiquetas[$tabla] ?? str_replace('_', ' ', $tabla);
+        $motivos = [];
+
+        // Cualquier tabla que apunte a este producto (excepto sus lotes y su kárdex, que se revisan aparte)
+        foreach (self::tablasQueReferencian('productos') as [$tabla, $columna]) {
+            if (in_array($tabla, ['lotes', 'movimientos_inventario'], true)) {
+                continue;
+            }
+            if (DB::table($tabla)->where($columna, $this->id)->exists()) {
+                $motivos[] = $nombre($tabla);
+            }
+        }
+
+        // En el kárdex solo puede tener el inventario inicial
+        $otrosMovimientos = MovimientoInventario::query()
+            ->where('producto_id', $this->id)
+            ->where('motivo', '!=', 'inventario_inicial')
+            ->exists();
+        if ($otrosMovimientos) {
+            $motivos[] = 'movimientos en el kárdex';
+        }
+
+        // Sus lotes tampoco deben estar usados en otros documentos
+        $loteIds = $this->lotes()->pluck('id');
+        if ($loteIds->isNotEmpty()) {
+            foreach (self::tablasQueReferencian('lotes') as [$tabla, $columna]) {
+                if ($tabla === 'movimientos_inventario') {
+                    continue;
+                }
+                if (DB::table($tabla)->whereIn($columna, $loteIds)->exists()) {
+                    $motivos[] = $nombre($tabla);
+                }
+            }
+        }
+
+        return array_values(array_unique($motivos));
+    }
+
+    /**
+     * Tablas y columnas con llave foránea hacia $tabla (se leen de la base de datos,
+     * así cualquier tabla nueva queda protegida sin tocar este código).
+     *
+     * @return array<int, array{0: string, 1: string}>
+     */
+    private static function tablasQueReferencian(string $tabla): array
+    {
+        if (DB::getDriverName() !== 'mysql') {
+            return [['compra_items', $tabla === 'productos' ? 'producto_id' : 'lote_id']];
+        }
+
+        return collect(DB::select(
+            'SELECT TABLE_NAME AS tabla, COLUMN_NAME AS columna
+               FROM information_schema.KEY_COLUMN_USAGE
+              WHERE TABLE_SCHEMA = DATABASE() AND REFERENCED_TABLE_NAME = ?',
+            [$tabla],
+        ))->map(fn ($r) => [$r->tabla, $r->columna])->unique()->values()->all();
+    }
+
     /** Ej: "PARACETAMOL 500 MG CJA X 100 TAB" */
     public function descripcionCompleta(): string
     {
@@ -115,4 +193,4 @@ class Producto extends Model
             $this->nombre, $this->concentracion, $this->presentacion,
         ])));
     }
-}
+}

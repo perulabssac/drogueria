@@ -61,29 +61,74 @@ class InventarioService
     /**
      * Revierte las entradas que hizo un documento (ej. al anular una compra).
      * Falla si parte de esa mercadería ya salió del almacén.
+     *
+     * - $neto = true: por cada lote revierte solo lo que sigue ingresado por el documento
+     *   (entradas menos las reversiones ya hechas). Se usa en compras, que pueden haberse
+     *   corregido antes (cada corrección revierte y vuelve a ingresar).
+     * - $accion: verbo para el mensaje de error ("anular", "corregir"...).
      */
-    public function revertirEntradas(Model $origen, ?int $userId, string $motivo): void
+    public function revertirEntradas(Model $origen, ?int $userId, string $motivo, bool $neto = false, string $accion = 'anular'): void
     {
-        $entradas = MovimientoInventario::query()
-            ->where('referencia_type', $origen->getMorphClass())
-            ->where('referencia_id', $origen->getKey())
-            ->where('tipo', 'entrada')
-            ->get();
+        foreach ($this->entradasPorRevertir($origen, $neto) as $loteId => $cantidad) {
+            $lote = Lote::query()->lockForUpdate()->findOrFail($loteId);
 
-        foreach ($entradas as $entrada) {
-            $lote = Lote::query()->lockForUpdate()->findOrFail($entrada->lote_id);
-
-            if ((float) $lote->cantidad + 0.0001 < (float) $entrada->cantidad) {
+            if ((float) $lote->cantidad + 0.0001 < $cantidad) {
                 throw ValidationException::withMessages([
-                    'compra' => "No se puede anular: del lote {$lote->numero_lote} ya salió mercadería (quedan {$lote->cantidad}, ingresaron {$entrada->cantidad}).",
+                    'compra' => "No se puede {$accion}: del lote {$lote->numero_lote} ya salió mercadería (quedan {$lote->cantidad}, ingresaron {$cantidad}).",
                 ]);
             }
 
-            $lote->cantidad = (float) $lote->cantidad - (float) $entrada->cantidad;
+            $lote->cantidad = round((float) $lote->cantidad - $cantidad, 2);
             $lote->save();
 
-            $this->registrarMovimiento($lote, 'salida', $motivo, (float) $entrada->cantidad, $userId, $origen);
+            $this->registrarMovimiento($lote, 'salida', $motivo, $cantidad, $userId, $origen);
         }
+    }
+
+    /**
+     * Revisa, sin cambiar nada, si las entradas de un documento siguen completas en sus lotes
+     * (es decir, que nada de esa mercadería se vendió ni se movió).
+     */
+    public function entradasIntactas(Model $origen, bool $neto = true): bool
+    {
+        foreach ($this->entradasPorRevertir($origen, $neto) as $loteId => $cantidad) {
+            $lote = Lote::find($loteId);
+            if (! $lote || (float) $lote->cantidad + 0.0001 < $cantidad) {
+                return false;
+            }
+        }
+
+        return true;
+    }
+
+    /**
+     * Cantidad por lote que un documento ingresó y que habría que retirar.
+     *
+     * @return array<int, float> lote_id => cantidad (unidad mínima)
+     */
+    private function entradasPorRevertir(Model $origen, bool $neto): array
+    {
+        $movimientos = MovimientoInventario::query()
+            ->where('referencia_type', $origen->getMorphClass())
+            ->where('referencia_id', $origen->getKey())
+            ->when(! $neto, fn ($q) => $q->where('tipo', 'entrada'))
+            ->orderBy('id')
+            ->get();
+
+        if (! $neto) {
+            // Comportamiento original: cada entrada por separado (agrupada por lote)
+            return $movimientos->groupBy('lote_id')->map(fn ($m) => round($m->sum(fn ($x) => (float) $x->cantidad), 2))->all();
+        }
+
+        return $movimientos
+            ->groupBy('lote_id')
+            ->map(fn ($m) => round(
+                $m->where('tipo', 'entrada')->sum(fn ($x) => (float) $x->cantidad)
+                - $m->where('tipo', 'salida')->sum(fn ($x) => (float) $x->cantidad),
+                2,
+            ))
+            ->filter(fn ($cantidad) => $cantidad > 0.0001)
+            ->all();
     }
 
     /**
@@ -213,4 +258,4 @@ class InventarioService
             'referencia_id' => $referencia?->getKey(),
         ]);
     }
-}
+}

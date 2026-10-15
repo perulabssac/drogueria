@@ -95,12 +95,15 @@ const soloLectura = usePage().props.auth.user.rol === 'contador';
                         <Tag :value="data.estado === 'anulada' ? 'Anulada' : 'Registrada'" :severity="data.estado === 'anulada' ? 'danger' : 'success'" />
                     </template>
                 </Column>
-                <Column class="text-right">
+                <Column class="text-right whitespace-nowrap">
                     <template #body="{ data }">
-                        <Link :href="`/compras/${data.id}`"><Button icon="pi pi-eye" text rounded v-tooltip.top="'Ver detalle'" /></Link>
+                        <Link :href="`/compras/${data.id}`"><Button icon="pi pi-eye" text rounded severity="secondary" v-tooltip.top="'Ver detalle'" /></Link>
+                        <Link v-if="!soloLectura && data.estado !== 'anulada'" :href="`/compras/${data.id}/editar`">
+                            <Button icon="pi pi-pencil" text rounded severity="info" v-tooltip.top="'Editar'" />
+                        </Link>
                     </template>
                 </Column>
             </DataTable>
         </div>
     </AppLayout>
-</template>
+</template>

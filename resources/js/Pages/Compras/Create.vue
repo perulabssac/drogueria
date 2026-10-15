@@ -18,7 +18,17 @@ import { obtenerJson, aFechaISO, finDeMes } from '@/utils/http';
 
 const props = defineProps({
     tiposDocumento: Object,
+    compra: { type: Object, default: null }, // al editar: la compra con su detalle
+    puedeEditarItems: { type: Boolean, default: true },
+    motivoSoloCabecera: { type: String, default: null },
 });
+
+// La misma pantalla registra una compra nueva o corrige una existente
+const editando = computed(() => !!props.compra);
+// Si ya se vendió parte de la mercadería o hay pagos, solo se corrigen los datos del documento
+const soloCabecera = computed(() => editando.value && !props.puedeEditarItems);
+const titulo = computed(() => (editando.value ? `Editar compra ${props.compra.documento}` : 'Registrar compra'));
+const aFecha = (iso) => (iso ? new Date(iso + 'T00:00:00') : null);
 
 const TASA_IGV = 0.18;
 const opcionesTipo = Object.entries(props.tiposDocumento).map(([value, label]) => ({ value, label }));
@@ -28,22 +38,23 @@ const opcionesPago = [
 ];
 
 // ---------- Cabecera del documento ----------
-const proveedor = ref(null);
+const proveedor = ref(props.compra?.proveedor ?? null);
 const sugerenciasProveedor = ref([]);
 const buscarProveedores = async (e) => {
     sugerenciasProveedor.value = await obtenerJson('/api/proveedores/buscar', { q: e.query });
 };
 
+const c = props.compra;
 const form = useForm({
-    proveedor_id: null,
-    tipo_documento: '01',
-    serie: '',
-    numero: '',
-    fecha_emision: new Date(),
-    forma_pago: 'contado',
-    fecha_vencimiento: null,
-    observaciones: '',
-    items: [],
+    proveedor_id: c?.proveedor?.id ?? null,
+    tipo_documento: c?.tipo_documento ?? '01',
+    serie: c?.serie ?? '',
+    numero: c?.numero ?? '',
+    fecha_emision: c ? aFecha(c.fecha_emision) : new Date(),
+    forma_pago: c?.forma_pago ?? 'contado',
+    fecha_vencimiento: aFecha(c?.fecha_vencimiento),
+    observaciones: c?.observaciones ?? '',
+    items: (c?.items ?? []).map((l) => ({ ...l, vence: aFecha(l.vence) })),
 });
 
 // ---------- Líneas (una por producto + lote, igual que en la factura) ----------
@@ -87,7 +98,7 @@ const totales = computed(() => {
 });
 
 // Para comparar con el total impreso en la factura del proveedor
-const totalDocumento = ref(null);
+const totalDocumento = ref(props.compra ? Number(props.compra.total) : null);
 const diferencia = computed(() =>
     totalDocumento.value === null ? null : Math.round((totalDocumento.value - totales.value.total) * 100) / 100,
 );
@@ -95,8 +106,8 @@ const diferencia = computed(() =>
 const error = (i, campo) => form.errors[`items.${i}.${campo}`];
 
 const guardar = () => {
-    form
-        .transform((d) => ({
+    const enviar = form.transform((d) => {
+        const datos = {
             ...d,
             proveedor_id: proveedor.value?.id ?? null,
             fecha_emision: aFechaISO(d.fecha_emision),
@@ -109,15 +120,30 @@ const guardar = () => {
                 precio_unitario: l.bonificacion ? 0 : l.precio_unitario,
                 bonificacion: l.bonificacion,
             })),
-        }))
-        .post('/compras', { preserveScroll: true });
+        };
+        // Con los productos bloqueados solo viajan los datos del documento
+        if (soloCabecera.value) delete datos.items;
+        return datos;
+    });
+
+    if (editando.value) enviar.put(`/compras/${props.compra.id}`, { preserveScroll: true });
+    else enviar.post('/compras', { preserveScroll: true });
 };
 </script>
 
 <template>
-    <Head title="Registrar compra" />
-    <AppLayout titulo="Registrar compra">
+    <Head :title="titulo" />
+    <AppLayout :titulo="titulo">
         <form class="space-y-6" @submit.prevent="guardar">
+            <!-- Avisos al editar -->
+            <Message v-if="form.errors.compra" severity="error">{{ form.errors.compra }}</Message>
+            <Message v-if="soloCabecera" severity="warn">
+                {{ motivoSoloCabecera }}
+            </Message>
+            <Message v-else-if="editando" severity="info">
+                Al guardar, el sistema retira del almacén lo que ingresó esta compra y lo vuelve a ingresar corregido. En el kárdex queda como "Corrección de compra".
+            </Message>
+
             <!-- CABECERA -->
             <section class="bg-white rounded-xl border border-slate-200 p-4 grid grid-cols-1 md:grid-cols-6 gap-4">
                 <div class="md:col-span-3 flex flex-col gap-1">
@@ -166,7 +192,8 @@ const guardar = () => {
                 </div>
                 <div class="md:col-span-2 flex flex-col gap-1">
                     <label class="text-sm">Condición de pago</label>
-                    <SelectButton v-model="form.forma_pago" :options="opcionesPago" optionLabel="label" optionValue="value" :allowEmpty="false" />
+                    <SelectButton v-model="form.forma_pago" :options="opcionesPago" optionLabel="label" optionValue="value" :allowEmpty="false" :disabled="soloCabecera" />
+                    <small class="text-red-600">{{ form.errors.forma_pago }}</small>
                 </div>
                 <div v-if="form.forma_pago === 'credito'" class="md:col-span-2 flex flex-col gap-1">
                     <label class="text-sm">Fecha de pago (vencimiento) *</label>
@@ -177,7 +204,7 @@ const guardar = () => {
 
             <!-- DETALLE -->
             <section class="bg-white rounded-xl border border-slate-200">
-                <div class="p-4 border-b border-slate-100 flex flex-col gap-1">
+                <div v-if="!soloCabecera" class="p-4 border-b border-slate-100 flex flex-col gap-1">
                     <label class="text-sm font-medium">Agregar producto</label>
                     <AutoComplete
                         v-model="productoBuscado"
@@ -230,29 +257,29 @@ const guardar = () => {
                                     </p>
                                 </td>
                                 <td class="p-3">
-                                    <InputNumber v-model="l.cantidad" :min="0" :maxFractionDigits="2" :suffix="' ' + l.producto.unidad_venta" fluid :invalid="!!error(i, 'cantidad')" />
+                                    <InputNumber v-model="l.cantidad" :min="0" :maxFractionDigits="2" :suffix="' ' + l.producto.unidad_venta" fluid :disabled="soloCabecera" :invalid="!!error(i, 'cantidad')" />
                                 </td>
                                 <td class="p-3">
-                                    <InputText v-model="l.numero_lote" fluid :invalid="!!error(i, 'numero_lote')" />
+                                    <InputText v-model="l.numero_lote" fluid :disabled="soloCabecera" :invalid="!!error(i, 'numero_lote')" />
                                     <small class="text-red-600">{{ error(i, 'numero_lote') }}</small>
                                 </td>
                                 <td class="p-3">
-                                    <DatePicker v-model="l.vence" view="month" dateFormat="mm/yy" :minDate="new Date()" fluid :invalid="!!error(i, 'fecha_vencimiento')" />
+                                    <DatePicker v-model="l.vence" view="month" dateFormat="mm/yy" :minDate="editando ? null : new Date()" fluid :disabled="soloCabecera" :invalid="!!error(i, 'fecha_vencimiento')" />
                                     <small class="text-red-600">{{ error(i, 'fecha_vencimiento') }}</small>
                                 </td>
                                 <td class="p-3">
-                                    <InputNumber v-model="l.precio_unitario" :minFractionDigits="3" :maxFractionDigits="3" prefix="S/ " :disabled="l.bonificacion" fluid :invalid="!!error(i, 'precio_unitario')" />
+                                    <InputNumber v-model="l.precio_unitario" :minFractionDigits="3" :maxFractionDigits="3" prefix="S/ " :disabled="l.bonificacion || soloCabecera" fluid :invalid="!!error(i, 'precio_unitario')" />
                                     <small class="text-red-600">{{ error(i, 'precio_unitario') }}</small>
                                 </td>
                                 <td class="p-3 text-center">
-                                    <Checkbox v-model="l.bonificacion" binary v-tooltip.top="'Llegó gratis (ej. 1+1)'" />
+                                    <Checkbox v-model="l.bonificacion" binary :disabled="soloCabecera" v-tooltip.top="'Llegó gratis (ej. 1+1)'" />
                                 </td>
                                 <td class="p-3 text-right font-medium whitespace-nowrap">
                                     <Tag v-if="l.bonificacion" value="Gratis" severity="success" />
                                     <span v-else>{{ soles(importe(l)) }}</span>
                                 </td>
                                 <td class="p-3">
-                                    <Button icon="pi pi-trash" text rounded severity="danger" @click="quitar(i)" />
+                                    <Button v-if="!soloCabecera" icon="pi pi-trash" text rounded severity="danger" @click="quitar(i)" />
                                 </td>
                             </tr>
                         </tbody>
@@ -286,9 +313,15 @@ const guardar = () => {
             </section>
 
             <div class="flex justify-end gap-2">
-                <Link href="/compras"><Button label="Cancelar" severity="secondary" text /></Link>
-                <Button type="submit" label="Registrar compra e ingresar al almacén" icon="pi pi-check" :loading="form.processing" :disabled="!form.items.length" />
+                <Link :href="editando ? `/compras/${compra.id}` : '/compras'"><Button label="Cancelar" severity="secondary" text /></Link>
+                <Button
+                    type="submit"
+                    :label="editando ? 'Guardar cambios' : 'Registrar compra e ingresar al almacén'"
+                    icon="pi pi-check"
+                    :loading="form.processing"
+                    :disabled="!form.items.length"
+                />
             </div>
         </form>
     </AppLayout>
-</template>
+</template>
