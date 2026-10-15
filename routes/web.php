@@ -269,4 +269,4 @@ Route::middleware('auth')->group(function () {
         Route::post('/probar-sunat', [ConfiguracionController::class, 'probarSunat'])->middleware('throttle:10,1');
         Route::post('/series', [ConfiguracionController::class, 'guardarSerie']);
     });
-});
+});

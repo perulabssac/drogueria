@@ -10,6 +10,7 @@ import IconField from 'primevue/iconfield';
 import InputIcon from 'primevue/inputicon';
 import DatePicker from 'primevue/datepicker';
 import Tag from 'primevue/tag';
+import { useConfirm } from 'primevue/useconfirm';
 import { soles, fecha } from '@/utils/formato';
 import { aFechaISO } from '@/utils/http';
 
@@ -37,6 +38,19 @@ watch(buscar, () => {
 watch([desde, hasta], () => recargar());
 // El contador solo consulta: no registra compras
 const soloLectura = usePage().props.auth.user.rol === 'contador';
+
+// Eliminar: el servidor revisa si se puede (sin pagos y con lotes que nadie más usó); si no, avisa y sugiere anular
+const confirm = useConfirm();
+const eliminar = (c) => {
+    confirm.require({
+        header: 'Eliminar compra',
+        message: `Se borrará definitivamente la compra ${c.documento} de ${c.proveedor.razon_social}, sus lotes y sus movimientos en el kárdex. Úsalo solo para compras registradas por error. Si ya se vendió parte de la mercadería, el sistema no lo permitirá y deberás anularla. ¿Continuar?`,
+        icon: 'pi pi-trash',
+        acceptProps: { label: 'Eliminar', severity: 'danger' },
+        rejectProps: { label: 'Cancelar', severity: 'secondary', outlined: true },
+        accept: () => router.delete(`/compras/${c.id}`, { preserveScroll: true }),
+    });
+};
 </script>
 
 <template>
@@ -101,9 +115,10 @@ const soloLectura = usePage().props.auth.user.rol === 'contador';
                         <Link v-if="!soloLectura && data.estado !== 'anulada'" :href="`/compras/${data.id}/editar`">
                             <Button icon="pi pi-pencil" text rounded severity="info" v-tooltip.top="'Editar'" />
                         </Link>
+                        <Button v-if="!soloLectura" icon="pi pi-trash" text rounded severity="danger" v-tooltip.top="'Eliminar'" @click="eliminar(data)" />
                     </template>
                 </Column>
             </DataTable>
         </div>
     </AppLayout>
-</template>
+</template>
