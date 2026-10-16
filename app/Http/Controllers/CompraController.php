@@ -216,6 +216,7 @@ class CompraController extends Controller
                     'numero_lote' => $item->numero_lote,
                     'vence' => $item->fecha_vencimiento->format('Y-m-01'),
                     'precio_unitario' => (float) $item->precio_unitario,
+                    'valor' => (float) $item->valor,
                     'bonificacion' => $item->bonificacion,
                 ])->values(),
             ],
@@ -444,6 +445,8 @@ class CompraController extends Controller
                 'items.*.fecha_vencimiento' => ['required', 'date', $compra ? 'after:fecha_emision' : 'after:today'],
                 'items.*.bonificacion' => ['boolean'],
                 'items.*.precio_unitario' => ['nullable', 'numeric', 'min:0'],
+                // "Valor venta" de la línea tal cual en la factura (sin IGV y con descuentos)
+                'items.*.valor_venta' => ['nullable', 'numeric', 'min:0'],
             ];
         }
 
@@ -484,16 +487,24 @@ class CompraController extends Controller
             $producto = Producto::findOrFail($linea['producto_id']);
             $bonificacion = (bool) ($linea['bonificacion'] ?? false);
             $cantidad = round((float) $linea['cantidad'], 2);
-            $precio = $bonificacion ? 0 : round((float) ($linea['precio_unitario'] ?? 0), 3);
-
-            if (! $bonificacion && $precio <= 0) {
-                throw ValidationException::withMessages(["items.{$i}.precio_unitario" => 'Falta el precio.']);
-            }
-
-            // Los precios de la factura incluyen IGV: separamos la base imponible
-            $total = round($cantidad * $precio, 2);
             $gravado = $producto->tipo_afectacion_igv === '10';
-            $valor = $gravado ? round($total / (1 + self::TASA_IGV), 2) : $total;
+            $valorVenta = $bonificacion ? 0 : round((float) ($linea['valor_venta'] ?? 0), 2);
+
+            if ($valorVenta > 0) {
+                // Modo factura: se usa el "Valor venta" impreso tal cual (exacto, sin recalcular)
+                $valor = $valorVenta;
+                $total = $gravado ? round($valor * (1 + self::TASA_IGV), 2) : $valor;
+                $precio = round($total / $cantidad, 3); // solo referencial
+            } else {
+                $precio = $bonificacion ? 0 : round((float) ($linea['precio_unitario'] ?? 0), 3);
+                if (! $bonificacion && $precio <= 0) {
+                    throw ValidationException::withMessages(["items.{$i}.precio_unitario" => 'Falta el precio.']);
+                }
+
+                // Precio unitario con IGV: separamos la base imponible
+                $total = round($cantidad * $precio, 2);
+                $valor = $gravado ? round($total / (1 + self::TASA_IGV), 2) : $total;
+            }
             $costoSinIgv = $bonificacion ? 0 : round($valor / $cantidad, 4); // por presentación
 
             $item = $compra->items()->create([
@@ -531,13 +542,20 @@ class CompraController extends Controller
     private function recalcularTotales(Compra $compra): void
     {
         $items = $compra->items()->get();
+        $gravadas = round($items->where('tipo_afectacion_igv', '10')->sum('valor'), 2);
+        $exoneradas = round($items->where('tipo_afectacion_igv', '!=', '10')->sum('valor'), 2);
+        // Como en la factura del proveedor: el IGV se calcula una vez sobre el total gravado
+        // (sumar el IGV de cada línea puede diferir en céntimos)
+        $igv = round($gravadas * self::TASA_IGV, 2);
+        $total = round($gravadas + $exoneradas + $igv, 2);
+
         $compra->update([
-            'op_gravadas' => $items->where('tipo_afectacion_igv', '10')->sum('valor'),
-            'op_exoneradas' => $items->where('tipo_afectacion_igv', '!=', '10')->sum('valor'),
-            'igv' => $items->sum('igv'),
-            'total' => $items->sum('total'),
+            'op_gravadas' => $gravadas,
+            'op_exoneradas' => $exoneradas,
+            'igv' => $igv,
+            'total' => $total,
             // Al crédito se le debe todo al proveedor hasta registrar sus pagos (Cuentas por pagar)
-            'saldo' => $compra->forma_pago === 'credito' ? $items->sum('total') : 0,
+            'saldo' => $compra->forma_pago === 'credito' ? $total : 0,
         ]);
     }
 
@@ -590,4 +608,4 @@ class CompraController extends Controller
 
         return ['sugeridos' => $sugeridos, 'sinMargen' => $sinMargen];
     }
-}
+}

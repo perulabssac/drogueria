@@ -13,7 +13,7 @@ import Checkbox from 'primevue/checkbox';
 import Textarea from 'primevue/textarea';
 import Message from 'primevue/message';
 import Tag from 'primevue/tag';
-import { soles } from '@/utils/formato';
+import { soles, precio } from '@/utils/formato';
 import { obtenerJson, aFechaISO, finDeMes } from '@/utils/http';
 
 const props = defineProps({
@@ -54,8 +54,18 @@ const form = useForm({
     forma_pago: c?.forma_pago ?? 'contado',
     fecha_vencimiento: aFecha(c?.fecha_vencimiento),
     observaciones: c?.observaciones ?? '',
-    items: (c?.items ?? []).map((l) => ({ ...l, vence: aFecha(l.vence) })),
+    items: (c?.items ?? []).map((l) => ({ ...l, vence: aFecha(l.vence), valor_venta: l.bonificacion ? null : l.valor })),
 });
+
+// ---------- Cómo se escriben los precios ----------
+// 'factura': el "Valor venta" de cada línea, sin IGV y ya con descuentos, tal cual está impreso (ej. DIMEXA).
+//            Es exacto: el sistema no recalcula ese importe, así el total cuadra con la factura.
+// 'unitario': el precio por unidad con IGV (para facturas que lo traen así).
+const modoPrecio = ref('factura');
+const opcionesModo = [
+    { value: 'factura', label: 'Valor venta de la línea (sin IGV)' },
+    { value: 'unitario', label: 'Precio unitario (con IGV)' },
+];
 
 // ---------- Líneas (una por producto + lote, igual que en la factura) ----------
 const productoBuscado = ref('');
@@ -74,6 +84,7 @@ const agregarProducto = (e) => {
         vence: null, // mes/año, como viene impreso en la factura
         // Sugerimos el último costo (se guarda sin IGV; en la factura viene con IGV)
         precio_unitario: p.costo ? Number((p.costo * (gravado ? 1 + TASA_IGV : 1)).toFixed(3)) : null,
+        valor_venta: null,
         bonificacion: false,
     });
     productoBuscado.value = '';
@@ -81,20 +92,34 @@ const agregarProducto = (e) => {
 
 const quitar = (i) => form.items.splice(i, 1);
 
-const importe = (l) => (l.bonificacion ? 0 : (Number(l.cantidad) || 0) * (Number(l.precio_unitario) || 0));
+const r2 = (n) => Math.round(n * 100) / 100;
+const gravada = (l) => l.producto.tipo_afectacion_igv === '10';
+
+// Base sin IGV de la línea: la escrita (modo factura) o la que sale del precio con IGV (modo unitario)
+const valorLinea = (l) => {
+    if (l.bonificacion) return 0;
+    if (modoPrecio.value === 'factura') return r2(Number(l.valor_venta) || 0);
+    const total = r2((Number(l.cantidad) || 0) * (Number(l.precio_unitario) || 0));
+    return gravada(l) ? r2(total / (1 + TASA_IGV)) : total;
+};
+// Importe de la línea con IGV (referencial)
+const importe = (l) => (gravada(l) ? r2(valorLinea(l) * (1 + TASA_IGV)) : valorLinea(l));
+// Precio por unidad con IGV que resulta del valor venta (solo se muestra)
+const unitarioConIgv = (l) => (Number(l.cantidad) > 0 ? importe(l) / Number(l.cantidad) : 0);
 
 // ---------- Totales (mismo cálculo que hace Laravel al guardar) ----------
+// Como en la factura: el IGV se calcula una sola vez sobre el total gravado
 const totales = computed(() => {
     let gravadas = 0;
     let exoneradas = 0;
-    let total = 0;
     for (const l of form.items) {
-        const imp = Math.round(importe(l) * 100) / 100;
-        total += imp;
-        if (l.producto.tipo_afectacion_igv === '10') gravadas += Math.round((imp / (1 + TASA_IGV)) * 100) / 100;
-        else exoneradas += imp;
+        if (gravada(l)) gravadas += valorLinea(l);
+        else exoneradas += valorLinea(l);
     }
-    return { gravadas, exoneradas, igv: total - gravadas - exoneradas, total };
+    gravadas = r2(gravadas);
+    exoneradas = r2(exoneradas);
+    const igv = r2(gravadas * TASA_IGV);
+    return { gravadas, exoneradas, igv, total: r2(gravadas + exoneradas + igv) };
 });
 
 // Para comparar con el total impreso en la factura del proveedor
@@ -117,7 +142,8 @@ const guardar = () => {
                 cantidad: l.cantidad,
                 numero_lote: l.numero_lote,
                 fecha_vencimiento: aFechaISO(finDeMes(l.vence)),
-                precio_unitario: l.bonificacion ? 0 : l.precio_unitario,
+                precio_unitario: l.bonificacion || modoPrecio.value === 'factura' ? 0 : l.precio_unitario,
+                valor_venta: !l.bonificacion && modoPrecio.value === 'factura' ? l.valor_venta : null,
                 bonificacion: l.bonificacion,
             })),
         };
@@ -229,6 +255,11 @@ const guardar = () => {
                     <small v-if="form.errors.items" class="text-red-600">{{ form.errors.items }}</small>
                 </div>
 
+                <div v-if="!soloCabecera" class="px-4 py-3 border-b border-slate-100 flex flex-wrap items-center gap-3 text-sm">
+                    <span class="text-slate-600">¿Cómo vienen los precios en la factura?</span>
+                    <SelectButton v-model="modoPrecio" :options="opcionesModo" optionLabel="label" optionValue="value" :allowEmpty="false" size="small" />
+                    <span v-if="modoPrecio === 'factura'" class="text-xs text-slate-500">Copia la última columna "Valor venta" de cada línea (ya trae los descuentos).</span>
+                </div>
                 <div class="overflow-x-auto">
                     <table class="w-full text-sm">
                         <thead class="bg-slate-50 text-slate-600 text-xs uppercase">
@@ -237,7 +268,7 @@ const guardar = () => {
                                 <th class="text-left p-3 w-28">Cantidad</th>
                                 <th class="text-left p-3 w-36">N° lote</th>
                                 <th class="text-left p-3 w-36">Vence (mes/año)</th>
-                                <th class="text-left p-3 w-36">Precio unit. (con IGV)</th>
+                                <th class="text-left p-3 w-40">{{ modoPrecio === 'factura' ? 'Valor venta (sin IGV)' : 'Precio unit. (con IGV)' }}</th>
                                 <th class="text-center p-3 w-20">Bonif.</th>
                                 <th class="text-right p-3 w-28">Importe</th>
                                 <th class="w-12"></th>
@@ -268,8 +299,12 @@ const guardar = () => {
                                     <small class="text-red-600">{{ error(i, 'fecha_vencimiento') }}</small>
                                 </td>
                                 <td class="p-3">
-                                    <InputNumber v-model="l.precio_unitario" :minFractionDigits="3" :maxFractionDigits="3" prefix="S/ " :disabled="l.bonificacion || soloCabecera" fluid :invalid="!!error(i, 'precio_unitario')" />
-                                    <small class="text-red-600">{{ error(i, 'precio_unitario') }}</small>
+                                    <template v-if="modoPrecio === 'factura'">
+                                        <InputNumber v-model="l.valor_venta" :minFractionDigits="2" :maxFractionDigits="2" prefix="S/ " :disabled="l.bonificacion || soloCabecera" fluid :invalid="!!error(i, 'precio_unitario')" />
+                                        <small v-if="!l.bonificacion && l.valor_venta && l.cantidad" class="text-slate-500">= {{ precio(unitarioConIgv(l)) }} c/u con IGV</small>
+                                    </template>
+                                    <InputNumber v-else v-model="l.precio_unitario" :minFractionDigits="3" :maxFractionDigits="3" prefix="S/ " :disabled="l.bonificacion || soloCabecera" fluid :invalid="!!error(i, 'precio_unitario')" />
+                                    <small class="block text-red-600">{{ error(i, 'precio_unitario') }}</small>
                                 </td>
                                 <td class="p-3 text-center">
                                     <Checkbox v-model="l.bonificacion" binary :disabled="soloCabecera" v-tooltip.top="'Llegó gratis (ej. 1+1)'" />
@@ -305,10 +340,13 @@ const guardar = () => {
     <InputNumber v-model="totalDocumento" prefix="S/ " :minFractionDigits="2" fluid inputClass="text-right" />
 </div>
                     </div>
-                    <Message v-if="diferencia !== null && diferencia !== 0" severity="warn" size="small">
+                    <Message v-if="diferencia !== null && Math.abs(diferencia) > 0.05" severity="warn" size="small">
                         No cuadra: hay {{ soles(Math.abs(diferencia)) }} de diferencia. Revisa cantidades y precios.
                     </Message>
                     <Message v-else-if="diferencia === 0" severity="success" size="small">El total coincide con la factura.</Message>
+                    <Message v-else-if="diferencia !== null" severity="success" size="small">
+                        Cuadra. La diferencia de {{ soles(Math.abs(diferencia)) }} es el redondeo que aplica el proveedor.
+                    </Message>
                 </div>
             </section>
 
@@ -324,4 +362,4 @@ const guardar = () => {
             </div>
         </form>
     </AppLayout>
-</template>
+</template>

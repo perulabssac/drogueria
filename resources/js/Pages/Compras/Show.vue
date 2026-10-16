@@ -155,7 +155,10 @@ const actualizarPrecios = () => {
                     <template #body="{ data }">{{ fecha(data.fecha_vencimiento).substring(3) }}</template>
                 </Column>
                 <Column field="numero_lote" header="N° lote" />
-                <Column header="Precio unit." class="text-right">
+                <Column header="Valor venta (s/IGV)" class="text-right">
+                    <template #body="{ data }">{{ data.bonificacion ? '—' : soles(data.valor) }}</template>
+                </Column>
+                <Column header="Precio unit. (c/IGV)" class="text-right">
                     <template #body="{ data }">{{ precio(data.precio_unitario) }}</template>
                 </Column>
                 <Column header="Importe" class="text-right">
@@ -278,4 +281,4 @@ const actualizarPrecios = () => {
             </div>
         </section>
     </AppLayout>
-</template>
+</template>
