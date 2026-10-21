@@ -54,6 +54,8 @@ const form = useForm({
     forma_pago: c?.forma_pago ?? 'contado',
     fecha_vencimiento: aFecha(c?.fecha_vencimiento),
     observaciones: c?.observaciones ?? '',
+    // Las unidades de regalo bajan el costo: lo pagado se reparte entre pagadas + gratis
+    prorratear_bonificaciones: true,
     items: (c?.items ?? []).map((l) => ({ ...l, vence: aFecha(l.vence), valor_venta: l.bonificacion ? null : l.valor })),
 });
 
@@ -93,6 +95,7 @@ const agregarProducto = (e) => {
 const quitar = (i) => form.items.splice(i, 1);
 
 const r2 = (n) => Math.round(n * 100) / 100;
+const hayBonificaciones = computed(() => form.items.some((l) => l.bonificacion));
 const gravada = (l) => l.producto.tipo_afectacion_igv === '10';
 
 // Base sin IGV de la línea: la escrita (modo factura) o la que sale del precio con IGV (modo unitario)
@@ -259,6 +262,10 @@ const guardar = () => {
                     <span class="text-slate-600">¿Cómo vienen los precios en la factura?</span>
                     <SelectButton v-model="modoPrecio" :options="opcionesModo" optionLabel="label" optionValue="value" :allowEmpty="false" size="small" />
                     <span v-if="modoPrecio === 'factura'" class="text-xs text-slate-500">Copia la última columna "Valor venta" de cada línea (ya trae los descuentos).</span>
+                    <label v-if="hayBonificaciones" class="flex items-center gap-2 sm:ml-auto" v-tooltip.top="'Ej.: 2 cajas pagadas + 1 gratis = lo pagado se divide entre 3. Así el precio sugerido sale más bajo.'">
+                        <Checkbox v-model="form.prorratear_bonificaciones" binary />
+                        <span>Repartir el costo de las bonificaciones</span>
+                    </label>
                 </div>
                 <div class="overflow-x-auto">
                     <table class="w-full text-sm">
@@ -362,4 +369,4 @@ const guardar = () => {
             </div>
         </form>
     </AppLayout>
-</template>
+</template>

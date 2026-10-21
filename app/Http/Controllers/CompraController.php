@@ -62,7 +62,10 @@ class CompraController extends Controller
 
         $usuario = $request->user();
 
-        $compra = DB::transaction(function () use ($datos, $usuario, $inventario) {
+        // Bonificaciones: su costo se reparte entre todas las unidades (ej. 2 + 1 gratis)
+        $prorratear = $request->boolean('prorratear_bonificaciones', true);
+
+        $compra = DB::transaction(function () use ($datos, $usuario, $inventario, $prorratear) {
             $compra = Compra::create([
                 ...collect($datos)->except('items')->all(),
                 'sucursal_id' => $usuario->sucursal_id,
@@ -70,7 +73,7 @@ class CompraController extends Controller
                 'fecha_vencimiento' => $datos['forma_pago'] === 'credito' ? $datos['fecha_vencimiento'] : null,
             ]);
 
-            $this->registrarItems($compra, $datos['items'], $usuario->id, $inventario);
+            $this->registrarItems($compra, $datos['items'], $usuario->id, $inventario, $prorratear);
             $this->recalcularTotales($compra);
 
             return $compra;
@@ -253,8 +256,9 @@ class CompraController extends Controller
         }
 
         $usuario = $request->user();
+        $prorratear = $request->boolean('prorratear_bonificaciones', true);
 
-        DB::transaction(function () use ($compra, $datos, $conItems, $usuario, $inventario) {
+        DB::transaction(function () use ($compra, $datos, $conItems, $usuario, $inventario, $prorratear) {
             $compra->update([
                 ...collect($datos)->except('items')->all(),
                 'fecha_vencimiento' => $datos['forma_pago'] === 'credito' ? $datos['fecha_vencimiento'] : null,
@@ -268,7 +272,7 @@ class CompraController extends Controller
             $inventario->revertirEntradas($compra, $usuario->id, 'edicion_compra', neto: true, accion: 'corregir');
             $this->corregirVencimientos($compra, $datos['items']);
             $compra->items()->delete();
-            $this->registrarItems($compra, $datos['items'], $usuario->id, $inventario);
+            $this->registrarItems($compra, $datos['items'], $usuario->id, $inventario, $prorratear);
             $this->recalcularTotales($compra);
         });
 
@@ -481,7 +485,7 @@ class CompraController extends Controller
     }
 
     /** Crea el detalle de la compra e ingresa cada línea a su lote. Va dentro de una transacción. */
-    private function registrarItems(Compra $compra, array $lineas, int $userId, InventarioService $inventario): void
+    private function registrarItems(Compra $compra, array $lineas, int $userId, InventarioService $inventario, bool $prorratear = true): void
     {
         foreach ($lineas as $i => $linea) {
             $producto = Producto::findOrFail($linea['producto_id']);
@@ -536,6 +540,37 @@ class CompraController extends Controller
             if (! $bonificacion) {
                 $producto->update(['costo' => $costoSinIgv]);
             }
+        }
+
+        if ($prorratear) {
+            $this->prorratearBonificaciones($compra);
+        }
+    }
+
+    /**
+     * Reparte lo pagado entre todas las unidades recibidas de cada producto, incluidas las de
+     * regalo. Ej.: 2 cajas por S/ 185.59 + 1 gratis => costo S/ 61.863 por caja (y no 92.795).
+     * Se actualiza el costo del producto (para el precio sugerido) y el de sus lotes de esta compra
+     * (para la rentabilidad). Los productos sin bonificación no cambian.
+     */
+    private function prorratearBonificaciones(Compra $compra): void
+    {
+        $items = $compra->items()->get();
+
+        foreach ($items->groupBy('producto_id') as $productoId => $lineas) {
+            if (! $lineas->contains('bonificacion', true) || ! $lineas->contains('bonificacion', false)) {
+                continue;
+            }
+
+            $pagado = (float) $lineas->where('bonificacion', false)->sum('valor');
+            $unidades = (float) $lineas->sum('cantidad'); // presentaciones, pagadas + gratis
+            if ($pagado <= 0 || $unidades <= 0) {
+                continue;
+            }
+
+            $costo = round($pagado / $unidades, 4); // por presentación, sin IGV
+            Producto::whereKey($productoId)->update(['costo' => $costo]);
+            Lote::whereIn('id', $lineas->pluck('lote_id')->filter()->unique())->update(['costo_unitario' => $costo]);
         }
     }
 
@@ -608,4 +643,4 @@ class CompraController extends Controller
 
         return ['sugeridos' => $sugeridos, 'sinMargen' => $sinMargen];
     }
-}
+}
