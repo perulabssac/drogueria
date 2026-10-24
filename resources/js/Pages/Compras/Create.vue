@@ -20,13 +20,16 @@ const props = defineProps({
     tiposDocumento: Object,
     compra: { type: Object, default: null }, // al editar: la compra con su detalle
     puedeEditarItems: { type: Boolean, default: true },
+    puedeEditarPrecios: { type: Boolean, default: true },
     motivoSoloCabecera: { type: String, default: null },
 });
 
 // La misma pantalla registra una compra nueva o corrige una existente
 const editando = computed(() => !!props.compra);
-// Si ya se vendió parte de la mercadería o hay pagos, solo se corrigen los datos del documento
-const soloCabecera = computed(() => editando.value && !props.puedeEditarItems);
+// Ya se vendió parte de la mercadería: cantidades y productos fijos, pero se corrigen precios, lotes y vencimientos
+const cantidadesFijas = computed(() => editando.value && !props.puedeEditarItems);
+// Con pagos al proveedor: solo los datos del documento
+const soloCabecera = computed(() => cantidadesFijas.value && !props.puedeEditarPrecios);
 const titulo = computed(() => (editando.value ? `Editar compra ${props.compra.documento}` : 'Registrar compra'));
 const aFecha = (iso) => (iso ? new Date(iso + 'T00:00:00') : null);
 
@@ -141,6 +144,7 @@ const guardar = () => {
             fecha_emision: aFechaISO(d.fecha_emision),
             fecha_vencimiento: d.forma_pago === 'credito' ? aFechaISO(d.fecha_vencimiento) : null,
             items: d.items.map((l) => ({
+                id: l.id ?? null, // al corregir solo precios, identifica la línea
                 producto_id: l.producto.id,
                 cantidad: l.cantidad,
                 numero_lote: l.numero_lote,
@@ -166,7 +170,7 @@ const guardar = () => {
         <form class="space-y-6" @submit.prevent="guardar">
             <!-- Avisos al editar -->
             <Message v-if="form.errors.compra" severity="error">{{ form.errors.compra }}</Message>
-            <Message v-if="soloCabecera" severity="warn">
+            <Message v-if="cantidadesFijas" severity="warn">
                 {{ motivoSoloCabecera }}
             </Message>
             <Message v-else-if="editando" severity="info">
@@ -221,7 +225,7 @@ const guardar = () => {
                 </div>
                 <div class="md:col-span-2 flex flex-col gap-1">
                     <label class="text-sm">Condición de pago</label>
-                    <SelectButton v-model="form.forma_pago" :options="opcionesPago" optionLabel="label" optionValue="value" :allowEmpty="false" :disabled="soloCabecera" />
+                    <SelectButton v-model="form.forma_pago" :options="opcionesPago" optionLabel="label" optionValue="value" :allowEmpty="false" :disabled="cantidadesFijas" />
                     <small class="text-red-600">{{ form.errors.forma_pago }}</small>
                 </div>
                 <div v-if="form.forma_pago === 'credito'" class="md:col-span-2 flex flex-col gap-1">
@@ -233,7 +237,7 @@ const guardar = () => {
 
             <!-- DETALLE -->
             <section class="bg-white rounded-xl border border-slate-200">
-                <div v-if="!soloCabecera" class="p-4 border-b border-slate-100 flex flex-col gap-1">
+                <div v-if="!cantidadesFijas" class="p-4 border-b border-slate-100 flex flex-col gap-1">
                     <label class="text-sm font-medium">Agregar producto</label>
                     <AutoComplete
                         v-model="productoBuscado"
@@ -295,7 +299,7 @@ const guardar = () => {
                                     </p>
                                 </td>
                                 <td class="p-3">
-                                    <InputNumber v-model="l.cantidad" :min="0" :maxFractionDigits="2" :suffix="' ' + l.producto.unidad_venta" fluid :disabled="soloCabecera" :invalid="!!error(i, 'cantidad')" />
+                                    <InputNumber v-model="l.cantidad" :min="0" :maxFractionDigits="2" :suffix="' ' + l.producto.unidad_venta" fluid :disabled="cantidadesFijas" :invalid="!!error(i, 'cantidad')" />
                                 </td>
                                 <td class="p-3">
                                     <InputText v-model="l.numero_lote" fluid :disabled="soloCabecera" :invalid="!!error(i, 'numero_lote')" />
@@ -314,14 +318,14 @@ const guardar = () => {
                                     <small class="block text-red-600">{{ error(i, 'precio_unitario') }}</small>
                                 </td>
                                 <td class="p-3 text-center">
-                                    <Checkbox v-model="l.bonificacion" binary :disabled="soloCabecera" v-tooltip.top="'Llegó gratis (ej. 1+1)'" />
+                                    <Checkbox v-model="l.bonificacion" binary :disabled="cantidadesFijas" v-tooltip.top="'Llegó gratis (ej. 1+1)'" />
                                 </td>
                                 <td class="p-3 text-right font-medium whitespace-nowrap">
                                     <Tag v-if="l.bonificacion" value="Gratis" severity="success" />
                                     <span v-else>{{ soles(importe(l)) }}</span>
                                 </td>
                                 <td class="p-3">
-                                    <Button v-if="!soloCabecera" icon="pi pi-trash" text rounded severity="danger" @click="quitar(i)" />
+                                    <Button v-if="!cantidadesFijas" icon="pi pi-trash" text rounded severity="danger" @click="quitar(i)" />
                                 </td>
                             </tr>
                         </tbody>

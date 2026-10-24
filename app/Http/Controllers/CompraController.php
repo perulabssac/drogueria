@@ -205,6 +205,7 @@ class CompraController extends Controller
                 'observaciones' => $compra->observaciones,
                 'total' => (float) $compra->total,
                 'items' => $compra->items->map(fn ($item) => [
+                    'id' => $item->id,
                     'producto' => [
                         'id' => $item->producto->id,
                         'codigo' => $item->producto->codigo,
@@ -224,6 +225,7 @@ class CompraController extends Controller
                 ])->values(),
             ],
             'puedeEditarItems' => $edicion['items'],
+            'puedeEditarPrecios' => $edicion['precios'],
             'motivoSoloCabecera' => $edicion['motivoSoloCabecera'],
         ]);
     }
@@ -242,8 +244,11 @@ class CompraController extends Controller
 
         $edicion = $this->estadoEdicion($compra);
         $conItems = $edicion['items'];
+        // Mercadería ya vendida pero sin pagos: se corrigen precios, lotes y vencimientos sin mover stock
+        $soloPrecios = ! $conItems && $edicion['precios'] && $request->has('items');
         $datos = $this->validar($request, $conItems, $compra);
         $this->verificarDuplicada($datos, $compra);
+        $lineasPrecios = $soloPrecios ? $this->validarSoloPrecios($request, $compra) : [];
 
         if (! $conItems) {
             // Con pagos registrados no se cambia la condición de pago (el saldo depende de ella)
@@ -258,12 +263,17 @@ class CompraController extends Controller
         $usuario = $request->user();
         $prorratear = $request->boolean('prorratear_bonificaciones', true);
 
-        DB::transaction(function () use ($compra, $datos, $conItems, $usuario, $inventario, $prorratear) {
+        DB::transaction(function () use ($compra, $datos, $conItems, $soloPrecios, $lineasPrecios, $usuario, $inventario, $prorratear) {
             $compra->update([
                 ...collect($datos)->except('items')->all(),
                 'fecha_vencimiento' => $datos['forma_pago'] === 'credito' ? $datos['fecha_vencimiento'] : null,
             ]);
 
+            if ($soloPrecios) {
+                $this->corregirPrecios($compra, $lineasPrecios, $prorratear);
+
+                return;
+            }
             if (! $conItems) {
                 return;
             }
@@ -276,7 +286,13 @@ class CompraController extends Controller
             $this->recalcularTotales($compra);
         });
 
-        return redirect("/compras/{$compra->id}")->with('success', "Compra {$compra->documento} actualizada.".($conItems ? ' El stock ya refleja los cambios.' : ''));
+        $detalle = match (true) {
+            $conItems => ' El stock ya refleja los cambios.',
+            $soloPrecios => ' Se corrigieron precios, lotes y costos (el stock no cambia).',
+            default => '',
+        };
+
+        return redirect("/compras/{$compra->id}")->with('success', "Compra {$compra->documento} actualizada.{$detalle}");
     }
 
     /**
@@ -319,7 +335,9 @@ class CompraController extends Controller
      * - items: corregir productos, cantidades, lotes y precios (mercadería intacta y sin pagos)
      * - eliminar: borrarla del todo (sin pagos y lotes usados solo por esta compra)
      *
-     * @return array{items: bool, motivoSoloCabecera: ?string, eliminar: bool, motivoNoEliminar: ?string}
+     * - precios: corregir solo precios, lotes y vencimientos de las líneas existentes (sin pagos)
+     *
+     * @return array{items: bool, precios: bool, motivoSoloCabecera: ?string, eliminar: bool, motivoNoEliminar: ?string}
      */
     private function estadoEdicion(Compra $compra): array
     {
@@ -331,9 +349,11 @@ class CompraController extends Controller
         $motivoSoloCabecera = match (true) {
             $anulada => 'La compra está anulada.',
             $pagosActivos => 'Tiene pagos registrados al proveedor: solo se pueden corregir los datos del documento. Para cambiar productos, anula los pagos en Cuentas por pagar.',
-            ! $intacta => 'Parte de la mercadería ya se vendió o se movió: solo se pueden corregir los datos del documento. Para cambiar productos, anula la compra y regístrala de nuevo.',
+            ! $intacta => 'Parte de la mercadería ya se vendió o se movió: puedes corregir precios, lotes y vencimientos, pero no las cantidades ni los productos. Si una cantidad está mal, corrígela con un Ajuste de inventario.',
             default => null,
         };
+        // Corregir precios, lotes y vencimientos no mueve stock: se permite aunque ya se haya vendido
+        $precios = ! $anulada && ! $pagosActivos;
 
         // Para eliminar: ningún pago (ni anulado) y lotes que solo se movieron por esta compra
         $motivoNoEliminar = null;
@@ -349,6 +369,7 @@ class CompraController extends Controller
 
         return [
             'items' => $motivoSoloCabecera === null,
+            'precios' => $precios,
             'motivoSoloCabecera' => $motivoSoloCabecera,
             'eliminar' => $motivoNoEliminar === null,
             'motivoNoEliminar' => $motivoNoEliminar,
@@ -391,6 +412,101 @@ class CompraController extends Controller
             ->where('lote_id', $loteId)
             ->where('compra_id', '!=', $compra->id)
             ->exists();
+    }
+
+    /**
+     * Valida la corrección de precios: las mismas líneas de la compra (por id), cada una con su
+     * precio (valor venta o precio unitario), lote y vencimiento. Cantidades y productos no cambian.
+     *
+     * @return array<int, array> líneas indexadas por id del detalle
+     */
+    private function validarSoloPrecios(Request $request, Compra $compra): array
+    {
+        $ids = $compra->items()->pluck('id')->all();
+
+        $datos = $request->validate([
+            'items' => ['required', 'array', 'size:'.count($ids)],
+            'items.*.id' => ['required', 'integer', Rule::in($ids), 'distinct'],
+            'items.*.numero_lote' => ['required', 'string', 'max:50'],
+            'items.*.fecha_vencimiento' => ['required', 'date', 'after:fecha_emision'],
+            'items.*.precio_unitario' => ['nullable', 'numeric', 'min:0'],
+            'items.*.valor_venta' => ['nullable', 'numeric', 'min:0'],
+        ], [
+            'items.size' => 'No se pueden agregar ni quitar productos: parte de la mercadería ya se vendió.',
+            'items.*.id.in' => 'Una de las líneas no pertenece a esta compra.',
+            'items.*.numero_lote.required' => 'Falta el lote.',
+            'items.*.fecha_vencimiento.after' => 'Vence antes de la fecha de la compra.',
+        ]);
+
+        return collect($datos['items'])->keyBy('id')->all();
+    }
+
+    /**
+     * Corrige precios, lotes y vencimientos de las líneas existentes sin mover stock.
+     * Actualiza importes de la compra, el costo de sus lotes y el del producto.
+     */
+    private function corregirPrecios(Compra $compra, array $lineas, bool $prorratear): void
+    {
+        $items = $compra->items()->with('producto', 'lote')->get();
+
+        foreach ($items as $i => $item) {
+            $linea = $lineas[$item->id];
+            $calculo = $this->calcularLinea($item->producto, (float) $item->cantidad, $item->bonificacion, $linea, $i);
+
+            // Lote o vencimiento corregido (error de tipeo): se renombra el lote, que solo usa esta compra
+            $numero = mb_strtoupper(trim($linea['numero_lote']));
+            $vence = $linea['fecha_vencimiento'];
+            if ($item->lote && ($item->lote->numero_lote !== $numero || $item->lote->fecha_vencimiento->toDateString() !== $vence)) {
+                $this->corregirLote($item, $numero, $vence, $compra, $i);
+            }
+
+            $item->update([
+                'numero_lote' => $numero,
+                'fecha_vencimiento' => $vence,
+                'precio_unitario' => $calculo['precio'],
+                'valor' => $calculo['valor'],
+                'igv' => round($calculo['total'] - $calculo['valor'], 2),
+                'total' => $calculo['total'],
+            ]);
+
+            if (! $item->bonificacion) {
+                $item->lote?->update(['costo_unitario' => $calculo['costo']]);
+                if ($this->esUltimaCompra($item->producto_id, $compra)) {
+                    $item->producto->update(['costo' => $calculo['costo']]);
+                }
+            }
+        }
+
+        if ($prorratear) {
+            $this->prorratearBonificaciones($compra);
+        }
+        $this->recalcularTotales($compra);
+    }
+
+    /** Renombra el lote de una línea. Solo si ninguna otra compra usa ese lote y el nuevo número no existe. */
+    private function corregirLote(CompraItem $item, string $numero, string $vence, Compra $compra, int $i): void
+    {
+        $lote = $item->lote;
+        $mensaje = "items.{$i}.numero_lote";
+
+        $otraCompra = CompraItem::query()->where('lote_id', $lote->id)->where('compra_id', '!=', $compra->id)->exists();
+        if ($otraCompra) {
+            throw ValidationException::withMessages([$mensaje => "El lote {$lote->numero_lote} también está en otra compra: no se puede cambiar desde aquí."]);
+        }
+
+        $existe = Lote::query()
+            ->where('producto_id', $lote->producto_id)
+            ->where('sucursal_id', $lote->sucursal_id)
+            ->where('numero_lote', $numero)
+            ->whereKeyNot($lote->id)
+            ->exists();
+        if ($existe) {
+            throw ValidationException::withMessages([$mensaje => "Ya existe otro lote {$numero} de este producto."]);
+        }
+
+        // Los demás detalles de esta compra con el mismo lote se actualizan juntos
+        $lote->update(['numero_lote' => $numero, 'fecha_vencimiento' => $vence]);
+        $compra->items()->where('lote_id', $lote->id)->update(['numero_lote' => $numero, 'fecha_vencimiento' => $vence]);
     }
 
     private function movimientosDeLaCompra(Compra $compra)
@@ -491,25 +607,8 @@ class CompraController extends Controller
             $producto = Producto::findOrFail($linea['producto_id']);
             $bonificacion = (bool) ($linea['bonificacion'] ?? false);
             $cantidad = round((float) $linea['cantidad'], 2);
-            $gravado = $producto->tipo_afectacion_igv === '10';
-            $valorVenta = $bonificacion ? 0 : round((float) ($linea['valor_venta'] ?? 0), 2);
-
-            if ($valorVenta > 0) {
-                // Modo factura: se usa el "Valor venta" impreso tal cual (exacto, sin recalcular)
-                $valor = $valorVenta;
-                $total = $gravado ? round($valor * (1 + self::TASA_IGV), 2) : $valor;
-                $precio = round($total / $cantidad, 3); // solo referencial
-            } else {
-                $precio = $bonificacion ? 0 : round((float) ($linea['precio_unitario'] ?? 0), 3);
-                if (! $bonificacion && $precio <= 0) {
-                    throw ValidationException::withMessages(["items.{$i}.precio_unitario" => 'Falta el precio.']);
-                }
-
-                // Precio unitario con IGV: separamos la base imponible
-                $total = round($cantidad * $precio, 2);
-                $valor = $gravado ? round($total / (1 + self::TASA_IGV), 2) : $total;
-            }
-            $costoSinIgv = $bonificacion ? 0 : round($valor / $cantidad, 4); // por presentación
+            ['valor' => $valor, 'total' => $total, 'precio' => $precio, 'costo' => $costoSinIgv]
+                = $this->calcularLinea($producto, $cantidad, $bonificacion, $linea, $i);
 
             $item = $compra->items()->create([
                 'producto_id' => $producto->id,
@@ -537,7 +636,8 @@ class CompraController extends Controller
             $item->update(['lote_id' => $lote->id]);
 
             // El último costo de compra queda como costo del producto
-            if (! $bonificacion) {
+            // (al corregir una compra antigua no se pisa el costo de una compra más reciente)
+            if (! $bonificacion && $this->esUltimaCompra($producto->id, $compra)) {
                 $producto->update(['costo' => $costoSinIgv]);
             }
         }
@@ -553,6 +653,50 @@ class CompraController extends Controller
      * Se actualiza el costo del producto (para el precio sugerido) y el de sus lotes de esta compra
      * (para la rentabilidad). Los productos sin bonificación no cambian.
      */
+    /**
+     * Importes de una línea a partir del "Valor venta" impreso (exacto) o del precio unitario con IGV.
+     *
+     * @return array{valor: float, total: float, precio: float, costo: float}
+     */
+    private function calcularLinea(Producto $producto, float $cantidad, bool $bonificacion, array $linea, int $i): array
+    {
+        if ($bonificacion) {
+            return ['valor' => 0.0, 'total' => 0.0, 'precio' => 0.0, 'costo' => 0.0];
+        }
+
+        $gravado = $producto->tipo_afectacion_igv === '10';
+        $valorVenta = round((float) ($linea['valor_venta'] ?? 0), 2);
+
+        if ($valorVenta > 0) {
+            // Modo factura: se usa el "Valor venta" impreso tal cual (exacto, sin recalcular)
+            $valor = $valorVenta;
+            $total = $gravado ? round($valor * (1 + self::TASA_IGV), 2) : $valor;
+            $precio = round($total / $cantidad, 3); // solo referencial
+        } else {
+            $precio = round((float) ($linea['precio_unitario'] ?? 0), 3);
+            if ($precio <= 0) {
+                throw ValidationException::withMessages(["items.{$i}.precio_unitario" => 'Falta el precio.']);
+            }
+
+            // Precio unitario con IGV: separamos la base imponible
+            $total = round($cantidad * $precio, 2);
+            $valor = $gravado ? round($total / (1 + self::TASA_IGV), 2) : $total;
+        }
+
+        return ['valor' => $valor, 'total' => $total, 'precio' => $precio, 'costo' => round($valor / $cantidad, 4)];
+    }
+
+    /** true si no hay una compra vigente más reciente con este producto. */
+    private function esUltimaCompra(int $productoId, Compra $compra): bool
+    {
+        return ! CompraItem::query()
+            ->where('producto_id', $productoId)
+            ->where('compra_id', '>', $compra->id)
+            ->where('bonificacion', false)
+            ->whereHas('compra', fn ($q) => $q->where('estado', '!=', 'anulada'))
+            ->exists();
+    }
+
     private function prorratearBonificaciones(Compra $compra): void
     {
         $items = $compra->items()->get();
@@ -569,7 +713,9 @@ class CompraController extends Controller
             }
 
             $costo = round($pagado / $unidades, 4); // por presentación, sin IGV
-            Producto::whereKey($productoId)->update(['costo' => $costo]);
+            if ($this->esUltimaCompra((int) $productoId, $compra)) {
+                Producto::whereKey($productoId)->update(['costo' => $costo]);
+            }
             Lote::whereIn('id', $lineas->pluck('lote_id')->filter()->unique())->update(['costo_unitario' => $costo]);
         }
     }
