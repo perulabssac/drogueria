@@ -12,7 +12,9 @@ use App\Models\User;
 use App\Services\CotizacionService;
 use App\Services\Sunat\SunatService;
 use App\Services\VentaService;
+use App\Support\ProductoVenta;
 use Illuminate\Http\RedirectResponse;
+use Illuminate\Support\Carbon;
 use Illuminate\Http\Request;
 use Illuminate\Validation\Rule;
 use Inertia\Inertia;
@@ -20,7 +22,10 @@ use Inertia\Response;
 
 class VentaController extends Controller
 {
-    /** Nueva venta. Con ?cotizacion=ID se carga una cotización vigente (cliente, productos y precios cotizados). */
+    /**
+     * Nueva venta. Con ?cotizacion=ID se carga una cotización vigente (cliente, productos y precios cotizados).
+     * Con ?nota=ID se convierte una nota de venta en boleta o factura (mismos productos, precios y pago).
+     */
     public function create(Request $request, CotizacionService $cotizaciones): Response|RedirectResponse
     {
         $desdeCotizacion = null;
@@ -46,8 +51,27 @@ class VentaController extends Controller
             ];
         }
 
+        $desdeNota = null;
+        if ($request->filled('nota')) {
+            $nota = Comprobante::query()
+                ->where('sucursal_id', $request->user()->sucursal_id)
+                ->with(['cliente', 'items', 'cuotas', 'pagos'])
+                ->findOrFail($request->integer('nota'));
+
+            if ($impedimento = $nota->impedimentoConversion()) {
+                return redirect("/comprobantes/{$nota->id}")->with('error', $impedimento);
+            }
+
+            $desdeNota = $this->datosNota($nota, $request->user()->sucursal_id);
+            if (! $desdeNota) {
+                return redirect("/comprobantes/{$nota->id}")
+                    ->with('error', 'Uno de los productos de la nota ya no está activo: actívalo en Productos o anula la nota y registra una venta nueva.');
+            }
+        }
+
         return Inertia::render('Ventas/Create', [
             'cotizacion' => $desdeCotizacion,
+            'notaVenta' => $desdeNota,
             'series' => Serie::query()
                 ->where('sucursal_id', $request->user()->sucursal_id)
                 ->whereIn('tipo_comprobante', ['01', '03', Comprobante::NOTA_VENTA])
@@ -72,7 +96,8 @@ class VentaController extends Controller
             'cuotas' => ['nullable', 'required_if:forma_pago,credito', 'array'],
             'cuotas.*.monto' => ['required', 'numeric', 'gt:0'],
             'cuotas.*.fecha_vencimiento' => ['required', 'date'],
-            'pagos' => ['nullable', 'required_if:forma_pago,contado', 'array'],
+            // Al convertir una nota de venta no se cobra de nuevo: se trasladan los pagos de la nota
+            'pagos' => ['nullable', Rule::requiredIf(fn () => $request->input('forma_pago') === 'contado' && ! $request->filled('nota_venta_id')), 'array'],
             'pagos.*.medio' => ['required', Rule::in(array_keys(ComprobantePago::MEDIOS))],
             'pagos.*.monto' => ['required', 'numeric', 'gt:0'],
             'pagos.*.recibido' => ['nullable', 'numeric', 'gt:0'],
@@ -82,6 +107,7 @@ class VentaController extends Controller
             'observaciones' => ['nullable', 'string', 'max:500'],
             'receta_verificada' => ['boolean'],
             'cotizacion_id' => ['nullable', 'integer', 'exists:cotizaciones,id'],
+            'nota_venta_id' => ['nullable', 'integer', 'exists:comprobantes,id'],
             'items' => ['required', 'array', 'min:1'],
             'items.*.producto_id' => ['required', 'integer', 'exists:productos,id'],
             'items.*.cantidad' => ['required', 'numeric', 'gt:0'],
@@ -108,6 +134,7 @@ class VentaController extends Controller
         // 2. Se envía a SUNAT en el momento
         $sunat->enviar($comprobante);
         $comprobante->refresh();
+        $origen = ! empty($datos['nota_venta_id']) ? ' Reemplaza a la nota de venta, que quedó anulada.' : '';
 
         $mensaje = match ($comprobante->estado) {
             'aceptado' => "{$comprobante->tipo_nombre} {$comprobante->numero} emitida y aceptada por SUNAT.",
@@ -118,7 +145,56 @@ class VentaController extends Controller
 
         return redirect("/comprobantes/{$comprobante->id}")->with(
             $mensaje ? 'success' : 'error',
-            $mensaje ?? "{$comprobante->tipo_nombre} {$comprobante->numero} registrada, pero no se pudo enviar a SUNAT: {$comprobante->sunat_descripcion}"
+            ($mensaje ?? "{$comprobante->tipo_nombre} {$comprobante->numero} registrada, pero no se pudo enviar a SUNAT: {$comprobante->sunat_descripcion}").$origen
         );
     }
-}
+
+    /**
+     * Datos de la nota de venta para llenar la pantalla de venta: cliente, productos agrupados
+     * (como se vendieron, sin separar por lote), cuotas y pagos.
+     * Al stock de cada producto se le suma lo de la nota, porque al convertir vuelve a los lotes.
+     */
+    private function datosNota(Comprobante $nota, int $sucursalId): ?array
+    {
+        $ids = $nota->items->pluck('producto_id')->unique()->values();
+        $productos = ProductoVenta::consulta($sucursalId)->whereKey($ids)->get()->keyBy('id');
+        if ($productos->count() !== $ids->count()) {
+            return null; // algún producto se desactivó después de la venta
+        }
+
+        // Unidades mínimas que salieron con la nota, por producto
+        $unidadesNota = $nota->items->groupBy('producto_id')->map(fn ($lineas) => $lineas->sum(
+            fn ($l) => (float) $l->cantidad * ($l->es_fraccion ? 1 : $productos[$l->producto_id]->factor())
+        ));
+
+        $items = $nota->items
+            ->groupBy(fn ($l) => implode('|', [$l->producto_id, (int) $l->es_fraccion, (int) $l->bonificacion, $l->bonificacion ? '' : $l->precio_unitario]))
+            ->map(function ($lineas) use ($productos, $unidadesNota) {
+                $l = $lineas->first();
+                $datos = ProductoVenta::datos($productos[$l->producto_id]);
+                $datos['stock'] = (float) ($datos['stock'] ?? 0) + (float) $unidadesNota[$l->producto_id];
+
+                return [
+                    'producto' => $datos,
+                    'cantidad' => round((float) $lineas->sum('cantidad'), 2),
+                    'por_fraccion' => (bool) $l->es_fraccion,
+                    'precio_unitario' => $l->bonificacion ? null : (float) $l->precio_unitario,
+                    'bonificacion' => (bool) $l->bonificacion,
+                ];
+            })
+            ->values();
+
+        return [
+            'id' => $nota->id,
+            'numero' => $nota->numero,
+            'total' => (float) $nota->total,
+            'forma_pago' => $nota->forma_pago,
+            'cliente' => $nota->cliente,
+            'vendedor_id' => $nota->vendedor_id,
+            'observaciones' => $nota->observaciones,
+            'items' => $items,
+            'cuotas' => $nota->cuotas->map(fn ($c) => ['monto' => (float) $c->monto, 'fecha' => Carbon::parse($c->fecha_vencimiento)->toDateString()])->values(),
+            'pagos' => $nota->pagos->map(fn ($p) => ['medio_nombre' => $p->medio_nombre, 'monto' => (float) $p->monto, 'referencia' => $p->referencia])->values(),
+        ];
+    }
+}

@@ -7,6 +7,7 @@ use App\Models\Empresa;
 use App\Services\ComprobantePdfService;
 use App\Services\EnvioComprobanteService;
 use App\Services\NotaCreditoService;
+use App\Services\NotaVentaService;
 use App\Services\Sunat\BajaService;
 use App\Services\Sunat\SunatService;
 use App\Support\NumeroALetras;
@@ -55,6 +56,8 @@ class ComprobanteController extends Controller
         $comprobante->load([
             'items', 'cliente', 'cuotas', 'pagos', 'vendedor:id,name', 'usuario:id,name', 'referencia', 'notas',
             'guias:id,comprobante_id,serie,correlativo,estado', 'bajaUsuario:id,name', 'envios.usuario:id,name',
+            // Nota de venta convertida <-> boleta o factura emitida en su lugar
+            'convertidoEn:id,tipo_comprobante,serie,correlativo,estado', 'notaOrigen:id,tipo_comprobante,serie,correlativo,convertido_en_id',
         ]);
         $esAdmin = $request->user()->tieneRol('admin');
 
@@ -68,6 +71,9 @@ class ComprobanteController extends Controller
             'limiteBaja' => in_array($comprobante->tipo_comprobante, ['01', '03'], true)
                 ? $comprobante->fechaLimiteBaja()->toDateString()
                 : null,
+            // Nota de venta: anular (solo administrador) y convertir en boleta o factura (vendedor y administrador)
+            'puedeAnularNota' => $esAdmin && ! $comprobante->impedimentoAnulacionNota(),
+            'puedeConvertir' => $request->user()->tieneRol('vendedor') && ! $comprobante->impedimentoConversion(),
             // Enlace público al PDF para enviarlo por WhatsApp (solo comprobantes válidos)
             'enlacePublico' => $comprobante->tieneValidez() ? $pdf->enlacePublico($comprobante) : null,
         ]);
@@ -202,6 +208,22 @@ class ComprobanteController extends Controller
             : back()->with('error', $mensaje);
     }
 
+    /** Anula una nota de venta (documento interno): no va a SUNAT, conserva su número. Solo administrador. */
+    public function anularNota(Request $request, Comprobante $comprobante, NotaVentaService $notas): RedirectResponse
+    {
+        abort_if((int) $comprobante->sucursal_id !== (int) $request->user()->sucursal_id, 404);
+
+        $datos = $request->validate([
+            'motivo' => ['required', 'string', 'min:3', 'max:100'],
+        ], [
+            'motivo.required' => 'Indica por qué se anula la nota de venta.',
+            'motivo.min' => 'Escribe un motivo un poco más claro.',
+            'motivo.max' => 'El motivo admite como máximo 100 caracteres.',
+        ]);
+
+        return back()->with('success', $notas->anular($comprobante, trim($datos['motivo']), $request->user()));
+    }
+
     /** Consulta el ticket de una baja que SUNAT aún procesaba. */
     public function consultarBaja(Comprobante $comprobante, BajaService $bajas): RedirectResponse
     {
@@ -234,4 +256,4 @@ class ComprobanteController extends Controller
             default => back()->with('error', "SUNAT: {$c->sunat_descripcion}"),
         };
     }
-}
+}

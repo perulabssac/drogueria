@@ -253,6 +253,9 @@ Route::middleware('auth')->group(function () {
         // Comunicación de baja (anula ante SUNAT dentro de los 7 días)
         Route::post('/comprobantes/{comprobante}/baja', [ComprobanteController::class, 'baja'])->name('comprobantes.baja');
 
+        // Anular una nota de venta (documento interno: no va a SUNAT)
+        Route::post('/comprobantes/{comprobante}/anular-nota', [ComprobanteController::class, 'anularNota'])->name('comprobantes.anular-nota');
+
         // Aprobar la toma de inventario (ajusta el stock según el conteo)
         Route::post('/tomas/{toma}/aprobar', [TomaInventarioController::class, 'aprobar'])->name('tomas.aprobar');
     });

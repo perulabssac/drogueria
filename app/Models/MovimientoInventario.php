@@ -19,6 +19,8 @@ class MovimientoInventario extends Model
         'devolucion_venta' => 'Devolución de cliente (nota de crédito)',
         'rechazo_sunat' => 'Reversión (comprobante rechazado por SUNAT)',
         'baja_sunat' => 'Reversión (comunicación de baja aceptada)',
+        'anulacion_nota_venta' => 'Reversión (nota de venta anulada)',
+        'conversion_nota_venta' => 'Reversión (nota de venta convertida en boleta o factura)',
         'anulacion_compra' => 'Anulación de compra',
         'edicion_compra' => 'Corrección de compra',
         'ajuste' => 'Ajuste de inventario',

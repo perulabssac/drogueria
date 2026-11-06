@@ -22,6 +22,8 @@ const props = defineProps({
     puedeBaja: Boolean,
     limiteBaja: String,
     enlacePublico: String,
+    puedeAnularNota: Boolean,
+    puedeConvertir: Boolean,
 });
 
 const c = computed(() => props.comprobante);
@@ -100,6 +102,27 @@ const BAJA = {
     error: { severidad: 'warn', titulo: 'La comunicación de baja no llegó a SUNAT' },
 };
 const baja = computed(() => BAJA[c.value.baja_estado] ?? null);
+
+// ===== Anular nota de venta (documento interno: no va a SUNAT) =====
+const dialogoAnularNota = ref(false);
+const formAnularNota = useForm({ motivo: '' });
+const MOTIVOS_ANULAR_NOTA = ['Error en precio o producto', 'Cliente desistió de la compra', 'Error en los datos del cliente'];
+const pagadoNota = computed(() => (c.value.pagos ?? []).reduce((t, p) => t + Number(p.monto), 0));
+
+const abrirAnularNota = () => {
+    formAnularNota.reset();
+    formAnularNota.clearErrors();
+    dialogoAnularNota.value = true;
+};
+
+const enviarAnularNota = () =>
+    formAnularNota.post(`/comprobantes/${c.value.id}/anular-nota`, {
+        preserveScroll: true,
+        onSuccess: () => (dialogoAnularNota.value = false),
+    });
+
+// Nota de venta anulada (a mano o al convertirla en boleta/factura)
+const notaAnulada = computed(() => esInterno.value && esAnulado.value);
 
 // ===== Enviar por correo =====
 const dialogoCorreo = ref(false);
@@ -205,6 +228,11 @@ const enviarWhatsapp = () => {
                 <Link v-if="puedeNotaCredito" :href="`/comprobantes/${c.id}/nota-credito`">
                     <Button label="Nota de crédito" icon="pi pi-file-edit" severity="warn" />
                 </Link>
+                <!-- Nota de venta: convertir en boleta/factura (verde azulado) y anular (rojo, solo administrador) -->
+                <Link v-if="puedeConvertir" :href="`/ventas/nueva?nota=${c.id}`">
+                    <Button label="Convertir en boleta/factura" icon="pi pi-sync" style="background: #0d9488; border-color: #0d9488; color: #fff" />
+                </Link>
+                <Button v-if="puedeAnularNota" label="Anular nota" icon="pi pi-ban" severity="danger" @click="abrirAnularNota" />
                 <!-- Comunicación de baja (rojo): anula el comprobante ante SUNAT, solo administrador -->
                 <Button v-if="puedeBaja" label="Dar de baja" icon="pi pi-ban" severity="danger" @click="abrirBaja" />
                 <Link v-if="!soloLectura" href="/ventas/nueva"><Button label="Nueva venta" icon="pi pi-plus" /></Link>
@@ -227,8 +255,35 @@ const enviarWhatsapp = () => {
         </Message>
 
         <!-- Nota de venta: documento interno -->
-        <Message v-if="esInterno" severity="info" class="mb-4">
-            Documento de uso interno, no enviado a SUNAT. No es comprobante de pago: si el cliente lo requiere, emítele boleta o factura.
+        <Message v-if="esInterno && !notaAnulada" severity="info" class="mb-4">
+            Documento de uso interno, no enviado a SUNAT. No es comprobante de pago: si el cliente lo requiere, conviértelo en boleta o factura.
+        </Message>
+
+        <!-- Nota de venta anulada o convertida -->
+        <Message v-if="notaAnulada" severity="secondary" class="mb-4">
+            <p class="font-semibold">
+                <template v-if="c.convertido_en">
+                    Nota de venta convertida en
+                    <Link :href="`/comprobantes/${c.convertido_en.id}`" class="underline">{{ c.convertido_en.tipo_nombre }} {{ c.convertido_en.numero }}</Link>
+                </template>
+                <template v-else>Nota de venta anulada</template>
+            </p>
+            <p class="text-sm mt-1">
+                <span v-if="!c.convertido_en">Motivo: {{ c.baja_motivo }}</span>
+                <span v-if="c.baja_usuario"> · {{ c.convertido_en ? 'Convertida' : 'Anulada' }} por {{ c.baja_usuario.name }}</span>
+                <span v-if="c.baja_at"> el {{ fecha(c.baja_at) }} {{ String(c.baja_at).substring(11, 16) }}</span>
+            </p>
+            <p class="text-sm mt-2 font-medium">
+                {{ c.convertido_en
+                    ? 'Los productos y el pago pasaron al nuevo comprobante. Esta nota ya no cuenta en ventas, caja ni deudas.'
+                    : 'La mercadería volvió al stock y esta nota ya no cuenta en ventas, caja ni deudas.' }}
+            </p>
+        </Message>
+
+        <!-- Boleta o factura emitida desde una nota de venta -->
+        <Message v-if="c.nota_origen" severity="secondary" class="mb-4">
+            Emitida en reemplazo de la nota de venta
+            <Link :href="`/comprobantes/${c.nota_origen.id}`" class="font-semibold underline">{{ c.nota_origen.numero }}</Link>, que quedó anulada.
         </Message>
 
         <!-- Respuesta de SUNAT -->
@@ -431,6 +486,44 @@ const enviarWhatsapp = () => {
             </template>
         </Dialog>
 
+        <!-- Diálogo: anular nota de venta -->
+        <Dialog v-model:visible="dialogoAnularNota" modal :header="`Anular nota de venta ${c.numero}`" :style="{ width: '32rem' }">
+            <Message severity="warn" class="mb-4">
+                <p class="text-sm">
+                    La nota quedará <b>ANULADA</b> (conserva su número), la mercadería volverá al stock y ya no contará en ventas, caja ni deudas.
+                    <b>No se puede deshacer.</b>
+                </p>
+                <p v-if="c.forma_pago === 'contado' && pagadoNota > 0" class="text-sm mt-1">
+                    Se cobraron {{ soles(pagadoNota) }}: hay que devolverlos al cliente. El sistema te indicará desde qué caja.
+                </p>
+                <p class="text-sm mt-1">¿El cliente solo quiere boleta o factura? Usa mejor <b>Convertir en boleta/factura</b>.</p>
+            </Message>
+            <div class="flex flex-col gap-1">
+                <label class="text-sm">Motivo de la anulación *</label>
+                <Textarea v-model="formAnularNota.motivo" rows="2" maxlength="100" autoResize fluid placeholder="Ej.: Error en precio o producto" />
+                <div class="flex justify-between">
+                    <small class="text-red-600">{{ formAnularNota.errors.motivo }}</small>
+                    <small class="text-slate-400">{{ formAnularNota.motivo.length }}/100</small>
+                </div>
+                <div class="flex flex-wrap gap-2 mt-1">
+                    <Button
+                        v-for="m in MOTIVOS_ANULAR_NOTA"
+                        :key="m"
+                        :label="m"
+                        size="small"
+                        :severity="formAnularNota.motivo === m ? 'danger' : 'secondary'"
+                        :outlined="formAnularNota.motivo !== m"
+                        :icon="formAnularNota.motivo === m ? 'pi pi-check' : undefined"
+                        @click="formAnularNota.motivo = m"
+                    />
+                </div>
+            </div>
+            <template #footer>
+                <Button label="Cancelar" severity="secondary" text @click="dialogoAnularNota = false" />
+                <Button label="Anular nota" icon="pi pi-ban" severity="danger" :loading="formAnularNota.processing" :disabled="formAnularNota.motivo.trim().length < 3" @click="enviarAnularNota" />
+            </template>
+        </Dialog>
+
         <!-- Diálogo: comunicación de baja -->
         <Dialog v-model:visible="dialogoBaja" modal :header="`Dar de baja ${c.tipo_nombre} ${c.numero}`" :style="{ width: '32rem' }">
             <Message severity="warn" class="mb-4">
@@ -466,4 +559,4 @@ const enviarWhatsapp = () => {
             </template>
         </Dialog>
     </AppLayout>
-</template>
+</template>

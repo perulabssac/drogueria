@@ -8,6 +8,7 @@ use Illuminate\Database\Eloquent\Builder;
 use Illuminate\Database\Eloquent\Model;
 use Illuminate\Database\Eloquent\Relations\BelongsTo;
 use Illuminate\Database\Eloquent\Relations\HasMany;
+use Illuminate\Database\Eloquent\Relations\HasOne;
 
 class Comprobante extends Model
 {
@@ -54,7 +55,7 @@ class Comprobante extends Model
         'estado', 'sunat_codigo', 'sunat_descripcion', 'sunat_observaciones', 'hash', 'resumen', 'ticket',
         'xml_path', 'cdr_path', 'intentos_envio', 'enviado_at',
         'baja_estado', 'baja_motivo', 'baja_documento', 'baja_ticket', 'baja_codigo', 'baja_descripcion',
-        'baja_cdr_path', 'baja_user_id', 'baja_at',
+        'baja_cdr_path', 'baja_user_id', 'baja_at', 'convertido_en_id',
     ];
 
     // Valores por defecto al crear (la base de datos también los tiene, pero así el
@@ -170,6 +171,18 @@ class Comprobante extends Model
         return $this->belongsTo(User::class, 'baja_user_id');
     }
 
+    /** Nota de venta convertida: la boleta o factura que se emitió en su lugar. */
+    public function convertidoEn(): BelongsTo
+    {
+        return $this->belongsTo(Comprobante::class, 'convertido_en_id');
+    }
+
+    /** Boleta o factura emitida desde una nota de venta: la nota de origen. */
+    public function notaOrigen(): HasOne
+    {
+        return $this->hasOne(Comprobante::class, 'convertido_en_id');
+    }
+
     /** Genera un código aleatorio que ningún otro comprobante tenga. */
     public static function nuevoCodigoPublico(): string
     {
@@ -260,6 +273,26 @@ class Comprobante extends Model
         };
     }
 
+    /**
+     * Por qué no se puede anular esta nota de venta (null = sí se puede).
+     * La nota de venta es interna: no va a SUNAT, se anula en el sistema y conserva su número.
+     */
+    public function impedimentoAnulacionNota(): ?string
+    {
+        return match (true) {
+            ! $this->esInterno() => 'Solo se anulan así las notas de venta. Las boletas y facturas se anulan con baja o nota de crédito.',
+            $this->estado !== 'interno' => 'Esta nota de venta ya está anulada.',
+            $this->pagos()->where('tipo', ComprobantePago::TIPO_COBRANZA)->exists() => 'Tiene cobranzas registradas: primero hay que revisarlas con el administrador.',
+            default => null,
+        };
+    }
+
+    /** Por qué no se puede convertir en boleta o factura (null = sí se puede). */
+    public function impedimentoConversion(): ?string
+    {
+        return $this->impedimentoAnulacionNota();
+    }
+
     public function puedeReenviarse(): bool
     {
         return ! $this->esInterno() && in_array($this->estado, ['pendiente', 'error'], true);
@@ -277,4 +310,4 @@ class Comprobante extends Model
 
         return $this->esNota() && str_starts_with($this->serie, 'B');
     }
-}
+}

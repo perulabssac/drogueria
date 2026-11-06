@@ -37,7 +37,8 @@ class VentaService
 
     /**
      * @param  array  $datos  serie_id, cliente_id, vendedor_id, forma_pago, cuotas[], pagos[], guia_remision,
-     *                        orden_compra, observaciones, receta_verificada, cotizacion_id, items[]
+     *                        orden_compra, observaciones, receta_verificada, cotizacion_id, nota_venta_id, items[]
+     *                        nota_venta_id: convierte esa nota de venta en esta boleta o factura (ver convertirNota)
      *                        items[]: producto_id, cantidad, por_fraccion, precio_unitario, bonificacion
      *                        pagos[]: medio, monto, recibido, referencia
      */
@@ -75,14 +76,21 @@ class VentaService
             if ($esFactura && ($problema = $cliente->problemaSunat())) {
                 throw ValidationException::withMessages(['cliente_id' => "No se puede emitir factura: {$problema}"]);
             }
-            if ($esCredito && $cliente->tieneDeudaVencida()) {
+            // Al convertir una nota de venta al crédito, su propia deuda no cuenta como deuda nueva
+            $convierteNota = ! empty($datos['nota_venta_id']);
+            if ($esCredito && ! $convierteNota && $cliente->tieneDeudaVencida()) {
                 throw ValidationException::withMessages([
                     'forma_pago' => 'El cliente tiene cuotas vencidas sin pagar. Cobra lo vencido (menú Cobranzas) o véndele al contado.',
                 ]);
             }
 
+            // Conversión de una nota de venta: se valida y su mercadería vuelve a los lotes
+            // para que esta venta la tome otra vez (normalmente de los mismos lotes)
+            $nota = ! empty($datos['nota_venta_id']) ? $this->prepararConversion((int) $datos['nota_venta_id'], $tipo, $esCredito, $usuario) : null;
+
             // El dinero de las ventas al contado entra a la caja de quien cobra
-            $caja = $esCredito ? null : $this->cajas->requerirAbierta($usuario, 'pagos');
+            // (al convertir una nota no entra dinero nuevo: se trasladan sus pagos)
+            $caja = $esCredito || $nota ? null : $this->cajas->requerirAbierta($usuario, 'pagos');
 
             // Productos con receta: el vendedor debe confirmar que la verificó
             $productos = Producto::whereIn('id', collect($datos['items'])->pluck('producto_id'))->get()->keyBy('id');
@@ -131,7 +139,9 @@ class VentaService
 
             // ===== NUEVO: límite de crédito del cliente (0 = sin tope) =====
             if ($esCredito && (float) $cliente->limite_credito > 0) {
-                $deudaTotal = $cliente->deuda() + (float) $comprobante->total; // esta venta aún tiene saldo 0
+                // Esta venta aún tiene saldo 0; si viene de una nota, la deuda de la nota se reemplaza por esta
+                $deudaTotal = $cliente->deuda() + (float) $comprobante->total
+                    - ($nota && (int) $nota->cliente_id === (int) $cliente->id ? (float) $nota->saldo : 0);
                 if ($deudaTotal > (float) $cliente->limite_credito + 0.009) {
                     throw ValidationException::withMessages([
                         'forma_pago' => 'Con esta venta el cliente debería S/ '.number_format($deudaTotal, 2)
@@ -140,12 +150,33 @@ class VentaService
                 }
             }
 
+            if ($nota && abs((float) $comprobante->total - (float) $nota->total) > 0.009) {
+                throw ValidationException::withMessages([
+                    'items' => "El total (S/ {$comprobante->total}) no coincide con la nota de venta {$nota->numero} (S/ {$nota->total}). "
+                        .'Si la venta cambió, anula la nota y registra una venta nueva.',
+                ]);
+            }
+
             if ($comprobante->esCredito()) {
                 $this->registrarCuotas($comprobante, $datos['cuotas'] ?? []);
                 // Al crédito: el cliente debe todo hasta que se registren sus cobros (módulo Cobranzas)
                 $comprobante->update(['saldo' => $comprobante->total]);
+            } elseif ($nota) {
+                // Lo ya cobrado con la nota pasa a este comprobante (sigue en la caja donde se cobró)
+                $nota->pagos()->update(['comprobante_id' => $comprobante->id]);
             } else {
                 $this->registrarPagos($comprobante, $datos['pagos'] ?? [], $usuario, $caja);
+            }
+
+            if ($nota) {
+                $nota->update([
+                    'estado' => 'anulado',
+                    'saldo' => 0,
+                    'convertido_en_id' => $comprobante->id,
+                    'baja_motivo' => "Convertida en {$comprobante->tipo_nombre} {$comprobante->numero}",
+                    'baja_user_id' => $usuario->id,
+                    'baja_at' => now(),
+                ]);
             }
 
             // Venta que nace de una cotización: la cotización queda como vendida (no se puede usar dos veces)
@@ -155,6 +186,34 @@ class VentaService
 
             return $comprobante;
         });
+    }
+
+    /**
+     * Valida la nota de venta que se convierte y devuelve su mercadería a los lotes.
+     * Debe ir dentro de la transacción de la venta.
+     */
+    private function prepararConversion(int $notaId, string $tipo, bool $esCredito, User $usuario): Comprobante
+    {
+        $nota = Comprobante::query()->lockForUpdate()->findOrFail($notaId);
+
+        if ($tipo === Comprobante::NOTA_VENTA) {
+            throw ValidationException::withMessages(['serie_id' => 'Una nota de venta se convierte en boleta o factura, no en otra nota.']);
+        }
+        if ((int) $nota->sucursal_id !== (int) $usuario->sucursal_id) {
+            throw ValidationException::withMessages(['nota_venta_id' => 'Esa nota de venta es de otra sucursal.']);
+        }
+        if ($impedimento = $nota->impedimentoConversion()) {
+            throw ValidationException::withMessages(['nota_venta_id' => $impedimento]);
+        }
+        if ($esCredito !== $nota->esCredito()) {
+            throw ValidationException::withMessages([
+                'forma_pago' => 'La condición de pago debe ser la misma de la nota de venta ('.($nota->esCredito() ? 'crédito' : 'contado').').',
+            ]);
+        }
+
+        $this->inventario->revertirSalidas($nota, $usuario->id, 'conversion_nota_venta');
+
+        return $nota;
     }
 
     /**
@@ -304,4 +363,4 @@ class VentaService
 
         $comprobante->update(['fecha_vencimiento' => collect($cuotas)->max('fecha_vencimiento')]);
     }
-}
+}

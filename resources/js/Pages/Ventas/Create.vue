@@ -25,6 +25,7 @@ const props = defineProps({
     mediosPago: Object,
     cajaAbierta: Boolean,
     cotizacion: { type: Object, default: null }, // venta que nace de una cotización
+    notaVenta: { type: Object, default: null }, // nota de venta que se convierte en boleta o factura
 });
 
 const TASA_IGV = 0.18;
@@ -32,15 +33,20 @@ const confirm = useConfirm();
 const usuario = usePage().props.auth.user;
 
 // ================= COMPROBANTE =================
+// Al convertir una nota de venta: los mismos productos, precios y pago; solo se elige boleta o factura
+const nota = props.notaVenta;
+const desdeNota = !!nota;
 const opcionesTipo = [
     { value: '01', label: 'Factura' },
-    { value: '03', label: 'Boleta' },
-    { value: 'NV', label: 'Nota de venta' },
+    // Las boletas son solo al contado
+    ...(nota?.forma_pago === 'credito' ? [] : [{ value: '03', label: 'Boleta' }]),
+    ...(desdeNota ? [] : [{ value: 'NV', label: 'Nota de venta' }]),
 ];
 const NOMBRES = { '01': 'factura', '03': 'boleta', NV: 'nota de venta' };
 // Desde una cotización: factura si el cliente tiene RUC; si no, boleta
 const cot = props.cotizacion;
-const tipo = ref(cot && cot.cliente.tipo_documento !== '6' ? '03' : '01');
+const origen = cot ?? nota; // cotización o nota de venta de la que nace esta venta
+const tipo = ref(origen && origen.cliente.tipo_documento !== '6' && nota?.forma_pago !== 'credito' ? '03' : '01');
 const seriesDelTipo = computed(() => props.series.filter((s) => s.tipo_comprobante === tipo.value));
 const esFactura = computed(() => tipo.value === '01');
 const esBoleta = computed(() => tipo.value === '03');
@@ -51,19 +57,21 @@ const form = useForm({
     serie_id: seriesDelTipo.value[0]?.id ?? null,
     cliente_id: null,
     cotizacion_id: cot?.id ?? null,
-    vendedor_id: cot?.vendedor_id ?? usuario.id,
-    forma_pago: cot && tipo.value === '01' ? cot.forma_pago : 'contado',
-    cuotas: [],
+    nota_venta_id: nota?.id ?? null,
+    vendedor_id: origen?.vendedor_id ?? usuario.id,
+    forma_pago: nota ? nota.forma_pago : cot && tipo.value === '01' ? cot.forma_pago : 'contado',
+    cuotas: (nota?.cuotas ?? []).map((q) => ({ monto: q.monto, fecha: new Date(q.fecha + 'T00:00:00') })),
     pagos: [{ medio: 'efectivo', monto: 0, recibido: null, referencia: '' }],
     guia_remision: '',
     orden_compra: '',
-    observaciones: cot?.observaciones ?? '',
+    observaciones: origen?.observaciones ?? '',
     receta_verificada: false,
-    items: cot?.items ?? [],
+    items: origen?.items ?? [],
 });
 
 // ================= CLIENTE =================
-const cliente = ref(cot?.cliente ?? null);
+// De una nota a nombre de "Clientes varios" que pasa a factura, hay que elegir el cliente con RUC
+const cliente = ref(origen?.cliente && !(tipo.value === '01' && origen.cliente.tipo_documento !== '6') ? origen.cliente : null);
 const sugerenciasCliente = ref([]);
 const textoCliente = ref(''); // lo que se escribió en el buscador
 const errorBusquedaCliente = ref('');
@@ -82,7 +90,7 @@ watch(tipo, (t) => {
     form.serie_id = seriesDelTipo.value[0]?.id ?? null;
     if (t === '03' || t === 'NV') {
         cliente.value = cliente.value ?? props.clienteVarios;
-        if (t === '03') form.forma_pago = 'contado';
+        if (t === '03' && !desdeNota) form.forma_pago = 'contado';
     } else if (cliente.value?.tipo_documento !== '6') {
         cliente.value = null;
     }
@@ -280,7 +288,7 @@ const puedeEmitir = computed(
         form.serie_id &&
         (!requiereReceta.value || form.receta_verificada) &&
         (form.forma_pago === 'contado'
-            ? props.cajaAbierta && pagosCuadran.value && !efectivoInsuficiente.value
+            ? desdeNota || (props.cajaAbierta && pagosCuadran.value && !efectivoInsuficiente.value) // la nota ya se cobró
             : cuotasCuadran.value && !creditoSinCliente.value) &&
         !boletaSinIdentificar.value &&
         !(esFactura.value && avisoCliente.value),
@@ -293,6 +301,7 @@ const emitir = () => {
         header: `Emitir ${nombreTipo.value}`,
         message:
             `Se emitirá la ${nombreTipo.value} serie ${serieElegida.value?.serie} por ${soles(totales.value.total)} a ${cliente.value.razon_social}` +
+            (desdeNota ? ` en reemplazo de la nota de venta ${nota.numero}, que quedará anulada (sin volver a cobrar ni a descontar stock)` : '') +
             (esInterno.value ? '. Es un documento interno: no se envía a SUNAT. ¿Continuar?' : ' y se enviará a SUNAT. ¿Continuar?'),
         icon: esInterno.value ? 'pi pi-file' : 'pi pi-send',
         acceptProps: { label: esInterno.value ? 'Registrar' : 'Emitir y enviar' },
@@ -304,7 +313,7 @@ const emitir = () => {
                     cliente_id: cliente.value?.id,
                     cuotas: d.forma_pago === 'credito' ? d.cuotas.map((c) => ({ monto: c.monto, fecha_vencimiento: aFechaISO(c.fecha) })) : [],
                     pagos:
-                        d.forma_pago === 'contado'
+                        d.forma_pago === 'contado' && !desdeNota
                             ? d.pagos.map((p) => ({
                                   medio: p.medio,
                                   monto: p.monto,
@@ -326,18 +335,29 @@ const emitir = () => {
 </script>
 
 <template>
-    <Head title="Nueva venta" />
-    <AppLayout titulo="Nueva venta">
+    <Head :title="nota ? 'Convertir ' + nota.numero : 'Nueva venta'" />
+    <AppLayout :titulo="nota ? `Convertir nota de venta ${nota.numero}` : 'Nueva venta'">
         <Message v-if="cot" severity="info" class="mb-4">
             Venta desde la cotización
             <Link :href="`/cotizaciones/${cot.id}`" class="font-semibold underline">{{ cot.numero }}</Link>
             con sus precios cotizados. Revisa el stock y el cobro: al emitir, la cotización quedará como <b>vendida</b>.
         </Message>
         <Message v-if="form.errors.cotizacion_id" severity="error" class="mb-4">{{ form.errors.cotizacion_id }}</Message>
+        <Message v-if="nota" severity="info" class="mb-4">
+            Convirtiendo la nota de venta
+            <Link :href="`/comprobantes/${nota.id}`" class="font-semibold underline">{{ nota.numero }}</Link>
+            ({{ soles(nota.total) }}) en boleta o factura, con los mismos productos, precios y pago. Al emitir, la nota quedará <b>anulada</b>:
+            no se vuelve a cobrar ni a descontar stock.
+        </Message>
+        <Message v-if="form.errors.nota_venta_id" severity="error" class="mb-4">{{ form.errors.nota_venta_id }}</Message>
         <div class="grid grid-cols-1 xl:grid-cols-3 gap-6">
             <!-- ===== IZQUIERDA: PRODUCTOS ===== -->
             <section class="xl:col-span-2 bg-white rounded-xl border border-slate-200 self-start">
-                <div class="p-4 border-b border-slate-100 flex flex-col gap-1">
+                <div v-if="desdeNota" class="p-4 border-b border-slate-100 text-sm text-slate-600">
+                    <i class="pi pi-lock mr-1"></i> Productos de la nota de venta {{ nota.numero }}. Si la venta cambió, anula la nota y registra una venta nueva.
+                    <small v-if="form.errors.items" class="text-red-600 block mt-1">{{ form.errors.items }}</small>
+                </div>
+                <div v-else class="p-4 border-b border-slate-100 flex flex-col gap-1">
                     <label class="text-sm font-medium">Agregar producto</label>
                     <AutoComplete
                         v-model="productoBuscado"
@@ -400,6 +420,7 @@ const emitir = () => {
                                     <SelectButton
                                         v-if="l.producto.fraccionable"
                                         v-model="l.por_fraccion"
+                                        :disabled="desdeNota"
                                         :options="opcionesUnidad(l.producto)"
                                         optionLabel="label"
                                         optionValue="value"
@@ -421,6 +442,7 @@ const emitir = () => {
                                         incrementButtonIcon="pi pi-plus"
                                         decrementButtonIcon="pi pi-minus"
                                         inputClass="text-center w-14"
+                                        :disabled="desdeNota"
                                         :invalid="!!error(i, 'cantidad') || sinStock(l)"
                                     />
                                 </td>
@@ -431,20 +453,20 @@ const emitir = () => {
                                         locale="en-US"
                                         :minFractionDigits="3"
                                         :maxFractionDigits="3"
-                                        :disabled="l.bonificacion"
+                                        :disabled="l.bonificacion || desdeNota"
                                         fluid
                                         :invalid="!!error(i, 'precio_unitario')"
                                     />
                                 </td>
                                 <td class="p-3 text-center">
-                                    <Checkbox v-model="l.bonificacion" binary v-tooltip.top="'Se entrega gratis (bonificación)'" />
+                                    <Checkbox v-model="l.bonificacion" binary :disabled="desdeNota" v-tooltip.top="'Se entrega gratis (bonificación)'" />
                                 </td>
                                 <td class="p-3 text-right font-medium whitespace-nowrap">
                                     <Tag v-if="l.bonificacion" value="Gratis" severity="success" />
                                     <span v-else>{{ soles(importe(l)) }}</span>
                                 </td>
                                 <td class="p-3">
-                                    <Button icon="pi pi-trash" text rounded severity="danger" @click="quitar(i)" />
+                                    <Button v-if="!desdeNota" icon="pi pi-trash" text rounded severity="danger" @click="quitar(i)" />
                                 </td>
                             </tr>
                         </tbody>
@@ -568,19 +590,28 @@ const emitir = () => {
                 <section class="bg-white rounded-xl border border-slate-200 p-5 space-y-3">
                     <div class="flex items-center justify-between">
                         <h2 class="font-semibold">Condición de pago</h2>
-                        <SelectButton v-model="form.forma_pago" :options="opcionesPago" optionLabel="label" optionValue="value" :allowEmpty="false" :disabled="esBoleta" />
+                        <SelectButton v-model="form.forma_pago" :options="opcionesPago" optionLabel="label" optionValue="value" :allowEmpty="false" :disabled="esBoleta || desdeNota" />
                     </div>
                     <small v-if="esBoleta" class="text-slate-500 block">Las boletas son solo al contado. Para crédito usa factura o nota de venta.</small>
                     <Message v-if="creditoSinCliente" severity="warn" size="small">Para vender al crédito elige un cliente identificado (no "Clientes varios").</Message>
                     <Message v-if="form.errors.forma_pago" severity="error" size="small">{{ form.errors.forma_pago }}</Message>
 
                     <!-- Sin caja abierta no se puede cobrar al contado -->
-                    <Message v-if="form.forma_pago === 'contado' && !cajaAbierta" severity="warn" size="small">
+                    <Message v-if="form.forma_pago === 'contado' && !cajaAbierta && !desdeNota" severity="warn" size="small">
                         No tienes tu caja abierta. <Link href="/caja" class="font-semibold underline">Abre tu caja</Link> para cobrar al contado.
                     </Message>
 
                     <!-- Contado: con qué se pagó (uno o varios medios) -->
-                    <template v-if="form.forma_pago === 'contado'">
+                    <!-- Nota de venta al contado: ya se cobró; el pago pasa al nuevo comprobante -->
+                    <div v-if="desdeNota && form.forma_pago === 'contado'" class="rounded-lg border border-teal-200 bg-teal-50 p-3 text-sm space-y-1">
+                        <p class="font-medium text-teal-900">Ya pagado con la nota {{ nota.numero }}</p>
+                        <div v-for="(p, i) in nota.pagos" :key="i" class="flex justify-between">
+                            <span>{{ p.medio_nombre }}<span v-if="p.referencia" class="text-slate-500"> · Op. {{ p.referencia }}</span></span>
+                            <span class="font-medium">{{ soles(p.monto) }}</span>
+                        </div>
+                        <p class="text-xs text-teal-800">No se vuelve a cobrar: el pago pasa al nuevo comprobante en la misma caja.</p>
+                    </div>
+                    <template v-if="form.forma_pago === 'contado' && !desdeNota">
                         <div v-for="(p, i) in form.pagos" :key="i" class="rounded-lg border border-slate-200 p-3 space-y-2">
                             <div class="flex items-center gap-2">
                                 <Select v-model="p.medio" :options="opcionesMedio" optionLabel="label" optionValue="value" class="flex-1" />
@@ -676,4 +707,4 @@ const emitir = () => {
             </div>
         </div>
     </AppLayout>
-</template>
+</template>
